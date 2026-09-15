@@ -45,16 +45,35 @@ Bu, yerleşik yolun yaptığı matematiğin aynısıdır.
 
 ## Uygulama
 
-- **Sohbet** — token token akan yanıt, yanıt başına ölçümler (tok/s, ilk token
-  süresi, token sayısı, tepe bellek), durdurma, yeni sohbet.
+- **Sohbet** — token token akan yanıt; Markdown olarak render edilir (başlık,
+  liste, alıntı, yatay kaydırılabilen ve kendi kopyala düğmesi olan kod
+  blokları). Modelin düşünce zinciri (`<think>…`) ayrı, katlanabilir bir
+  bölümde durur; model düşünürken nabız gibi atar. Yanıt başına ölçümler
+  (tok/s, ilk token süresi, token sayısı, tepe bellek), kopyala/paylaş,
+  durdurma.
+- **Geçmiş** — sohbetler otomatik kaydedilir ve listeden geri açılır. Geri
+  açmak yalnızca metni geri getirmez: oturum, konuşmanın geçmişiyle yeniden
+  kurulur, yani model kaldığı yerden **hatırlayarak** devam eder.
 - **Modeller** — her tier için boyut, beklenen tepe bellek, diskteki yer ve boş
   alan; canlı ilerlemeli indirme, iptal ve silme.
 - **Ayarlar** — sıcaklık / top-p / top-k / tekrar cezası / maks. token (tier
   varsayılanlarıyla), sistem istemi, düşünme modu, LoRA anahtarı, MLX önbellek
-  sınırı ve canlı bellek göstergeleri.
+  sınırı, expert önbellek bütçesi ve canlı bellek/önbellek göstergeleri.
 
 Model dosyaları `Application Support` altında tutulur (iOS'un temizleyebildiği
-`Caches` değil) ve iCloud yedeğinden hariç tutulur.
+`Caches` değil) ve iCloud yedeğinden hariç tutulur. Sohbetler de aynı yerde,
+sohbet başına bir JSON dosyası olarak saklanır.
+
+### Bellek
+
+35B'nin expert önbelleği **MB cinsinden** ayarlanır, katman başına expert
+sayısıyla değil: bütçe tüm MoE katmanları arasında paylaşılır ve yükleyici onu
+kontrol noktasının gerçek expert boyutuna bölerek katman başına slot sayısını
+bulur. Varsayılan, cihaz belleğinin on altıda biridir.
+
+iOS bellek uyarısı gönderdiğinde uygulamanın geri vermek için birkaç saniyesi
+vardır; o anda expert önbellekleri boşaltılır. Model yüklü kalır — sonraki adım
+o ağırlıkları diskten yeniden okur, yani yanıt değişmez, yalnızca yavaşlar.
 
 ## IPA'yı almak
 
@@ -81,6 +100,11 @@ cd ios && xcodegen generate && open Edge0Demo.xcodeproj
   diskten okunur. Kısa promptlarda ve devam eden sohbette çok daha hızlıdır
   (yönlendirme ardışık tokenlar arasında büyük ölçüde aynı kalır).
 - 23 GB'lık indirme Wi-Fi ve uygulamanın açık kalmasını gerektirir.
+- 35B, imzalama sırasında **artırılmış bellek sınırı** yetkisinden
+  (`com.apple.developer.kernel.increased-memory-limit`) faydalanır. Feather ile
+  imzalarken bu yetki profilinde varsa açık bırak; yoksa 35B jetsam sınırına
+  daha erken takılabilir — bu durumda Ayarlar'dan expert önbellek bütçesini
+  düşür.
 
 ## Kaynaklar ve lisans
 
