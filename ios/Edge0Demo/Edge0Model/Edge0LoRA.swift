@@ -23,9 +23,19 @@ struct Edge0LoRAReport: Sendable {
     var appliedTargets: [String] = []
     var unmatchedTargets: [String] = []
     var scale: Float = 0
+    /// Rank actually found in the adapter file, when it disagrees with the
+    /// rank the scale was computed from. `scale = alpha / r`, so a disagreement
+    /// means every delta is off by a constant factor — which looks like a model
+    /// that is simply a bit worse, not like a bug.
+    var rankMismatch: Int?
 
     var summary: String {
-        "applied=\(appliedTargets.count) unmatched=\(unmatchedTargets.count) scale=\(scale)"
+        var text = "applied=\(appliedTargets.count) unmatched=\(unmatchedTargets.count)"
+            + " scale=\(scale)"
+        if let rankMismatch {
+            text += " WARNING: adapter rank is \(rankMismatch), scale assumes another"
+        }
+        return text
     }
 }
 
@@ -83,6 +93,12 @@ enum Edge0LoRA {
             else {
                 report.unmatchedTargets.append(target)
                 continue
+            }
+            // edge0 computes the scale from its configured rank rather than
+            // from the file, so this follows suit — but records a disagreement
+            // instead of letting it pass unnoticed.
+            if a.ndim == 2, a.dim(0) != rank, report.rankMismatch == nil {
+                report.rankMismatch = a.dim(0)
             }
             parameters["\(modulePath).lora_a"] = a.T
             parameters["\(modulePath).lora_b"] = b.T

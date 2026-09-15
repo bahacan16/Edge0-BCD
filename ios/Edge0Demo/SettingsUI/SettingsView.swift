@@ -256,6 +256,9 @@ struct SettingsView: View {
                 for target in report.unmatchedTargets.prefix(5) {
                     lines.append("  eşleşmeyen: \(target)")
                 }
+                if let rank = report.rankMismatch {
+                    lines.append("  UYARI: adaptör rank'i \(rank), ölçek başka rank varsayıyor")
+                }
             } else {
                 lines.append("LoRA: uygulanmadı")
             }
