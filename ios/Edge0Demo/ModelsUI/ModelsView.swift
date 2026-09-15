@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ModelsView: View {
     @Environment(ModelManager.self) private var models
@@ -85,6 +86,7 @@ struct ModelsView: View {
 
 private struct TierCard: View {
     @Environment(ModelManager.self) private var models
+    @Environment(AppSettings.self) private var settings
     let tier: Edge0Tier
     let onLoad: () -> Void
     let onDelete: () -> Void
@@ -93,6 +95,16 @@ private struct TierCard: View {
     private var isDownloaded: Bool { models.downloadedTiers.contains(tier) }
     private var isBusyWithThis: Bool {
         models.phase.isBusy && models.pendingTier == tier
+    }
+
+    /// The load error, when this is the tier that failed. A failed phase is not
+    /// a busy one, so it needs its own branch rather than living inside the
+    /// progress section.
+    private var failureMessage: String? {
+        guard models.pendingTier == tier, case .failed(let message) = models.phase else {
+            return nil
+        }
+        return message
     }
 
     var body: some View {
@@ -111,6 +123,8 @@ private struct TierCard: View {
 
                 if isBusyWithThis {
                     progressSection
+                } else if let message = failureMessage {
+                    failureSection(message)
                 } else {
                     statsSection
                 }
@@ -152,6 +166,12 @@ private struct TierCard: View {
         }
     }
 
+    private var memoryWarning: String {
+        let available = ModelManager.formatBytes(ModelManager.availableProcessMemoryBytes)
+        return "Bellek dar görünüyor (uygulamaya kalan \(available)). "
+            + "Ayarlar'dan expert önbelleğini düşürmek gerekebilir."
+    }
+
     private var statsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             LabeledRow(
@@ -182,14 +202,45 @@ private struct TierCard: View {
             if !models.hasMemoryHeadroom(for: tier) {
                 // A warning, not a block: the budget moves around, and the
                 // expert cache can be turned down to make room.
-                Label(
-                    """
-                    Bellek dar görünüyor (uygulamaya kalan                     \(ModelManager.formatBytes(ModelManager.availableProcessMemoryBytes))).                     Ayarlar'dan expert önbelleğini düşürmek gerekebilir.
-                    """,
-                    systemImage: "memorychip"
-                )
+                Label(memoryWarning, systemImage: "memorychip")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.amber)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func failureSection(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(message, systemImage: "xmark.octagon.fill")
                 .font(.system(size: 11))
-                .foregroundStyle(Theme.amber)
+                .foregroundStyle(Theme.danger)
+                .textSelection(.enabled)
+            HStack(spacing: 8) {
+                Button {
+                    UIPasteboard.general.string = message
+                    Haptics.tap(enabled: settings.hapticsEnabled)
+                } label: {
+                    Label("Hatayı kopyala", systemImage: "doc.on.doc")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.blue)
+
+                // LoRA is the most likely thing to go wrong and the
+                // one part of the pipeline that is genuinely optional,
+                // so failing with it on is worth one suggestion rather
+                // than leaving retry as the only idea.
+                if settings.useLoRA {
+                    Button {
+                        settings.useLoRA = false
+                    } label: {
+                        Label("LoRA'sız dene", systemImage: "wand.and.stars.inverse")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.amber)
+                }
             }
         }
     }
@@ -210,10 +261,6 @@ private struct TierCard: View {
             case .preparing(let detail):
                 ProgressView().controlSize(.small)
                 Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
-            case .failed(let message):
-                Label(message, systemImage: "xmark.octagon.fill")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.danger)
             default:
                 EmptyView()
             }
