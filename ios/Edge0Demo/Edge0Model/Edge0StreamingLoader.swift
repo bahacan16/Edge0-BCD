@@ -68,11 +68,20 @@ enum Edge0StreamingLoader {
         }
 
         // 1. Resident weights only.
+        //
+        // A tensor that cannot be read is fatal, not skippable: skipping one
+        // leaves the model holding the random values its initializer produced,
+        // and since expert weights are legitimately absent here the parameter
+        // update cannot verify its keys and would not notice. The result would
+        // load cleanly and answer nonsense.
         var weights: [String: MLXArray] = [:]
         for name in shards.tensorNames where !isExpertTensor(name) {
-            guard let shard = shards.shard(for: name), let entry = shard.entries[name],
-                let dtype = SafetensorsMmap.dtype(from: entry.dtype)
-            else { continue }
+            guard let shard = shards.shard(for: name), let entry = shard.entries[name] else {
+                throw SafetensorsError.unknownTensor(name)
+            }
+            guard let dtype = SafetensorsMmap.dtype(from: entry.dtype) else {
+                throw SafetensorsError.unsupportedDType(tensor: name, dtype: entry.dtype)
+            }
             weights[name] = try shard.whole(tensor: name, as: dtype)
         }
         weights = model.sanitize(weights: weights)

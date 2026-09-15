@@ -31,6 +31,7 @@ enum SafetensorsError: LocalizedError {
     case cannotMap(String)
     case malformedHeader(String)
     case unknownTensor(String)
+    case unsupportedDType(tensor: String, dtype: String)
 
     var errorDescription: String? {
         switch self {
@@ -38,6 +39,8 @@ enum SafetensorsError: LocalizedError {
         case .cannotMap(let path): "Dosya belleğe eşlenemedi: \(path)"
         case .malformedHeader(let path): "Bozuk safetensors başlığı: \(path)"
         case .unknownTensor(let name): "Tensör bulunamadı: \(name)"
+        case .unsupportedDType(let tensor, let dtype):
+            "Desteklenmeyen tensör türü \(dtype): \(tensor)"
         }
     }
 }
@@ -159,41 +162,40 @@ final class SafetensorsMmap {
         let shape = Array(entry.shape.dropFirst())
         let buffer = try rawPointer(offset: offset, byteCount: rowBytes)
 
-        switch dtype {
-        case .uint32:
-            return MLXArray(buffer, shape, type: UInt32.self)
-        case .float16:
-            return MLXArray(buffer, shape, type: Float16.self)
-        case .bfloat16:
-            // No native Swift bfloat16; reinterpret the raw halves and let MLX
-            // view them with the right dtype.
-            let raw = MLXArray(buffer, [rowBytes / 2], type: UInt16.self)
-            return raw.view(dtype: .bfloat16).reshaped(shape)
-        case .float32:
-            return MLXArray(buffer, shape, type: Float.self)
-        default:
-            throw SafetensorsError.unknownTensor("\(name) (dtype \(dtype))")
-        }
+        return try array(
+            buffer: buffer, shape: shape, byteCount: rowBytes, dtype: dtype, tensor: name)
     }
 
     /// Copies an entire tensor out of the mapping.
     func whole(tensor name: String, as dtype: DType) throws -> MLXArray {
         guard let entry = entries[name] else { throw SafetensorsError.unknownTensor(name) }
         let buffer = try rawPointer(offset: entry.offset, byteCount: entry.byteCount)
+        return try array(
+            buffer: buffer, shape: entry.shape, byteCount: entry.byteCount, dtype: dtype,
+            tensor: name)
+    }
+
+    /// Builds an `MLXArray` over a copy of `buffer`. Shared by the whole-tensor
+    /// and single-row readers so the two can never support different dtypes.
+    private func array(
+        buffer: UnsafeRawBufferPointer, shape: [Int], byteCount: Int, dtype: DType, tensor: String
+    ) throws -> MLXArray {
         switch dtype {
-        case .uint32:
-            return MLXArray(buffer, entry.shape, type: UInt32.self)
-        case .uint8:
-            return MLXArray(buffer, entry.shape, type: UInt8.self)
-        case .float16:
-            return MLXArray(buffer, entry.shape, type: Float16.self)
+        case .uint32: MLXArray(buffer, shape, type: UInt32.self)
+        case .int32: MLXArray(buffer, shape, type: Int32.self)
+        case .uint16: MLXArray(buffer, shape, type: UInt16.self)
+        case .int16: MLXArray(buffer, shape, type: Int16.self)
+        case .uint8: MLXArray(buffer, shape, type: UInt8.self)
+        case .int8: MLXArray(buffer, shape, type: Int8.self)
+        case .float16: MLXArray(buffer, shape, type: Float16.self)
+        case .float32: MLXArray(buffer, shape, type: Float.self)
         case .bfloat16:
-            let raw = MLXArray(buffer, [entry.byteCount / 2], type: UInt16.self)
-            return raw.view(dtype: .bfloat16).reshaped(entry.shape)
-        case .float32:
-            return MLXArray(buffer, entry.shape, type: Float.self)
+            // No native Swift bfloat16; reinterpret the raw halves and let MLX
+            // view them with the right dtype.
+            MLXArray(buffer, [byteCount / 2], type: UInt16.self)
+                .view(dtype: .bfloat16).reshaped(shape)
         default:
-            throw SafetensorsError.unknownTensor("\(name) (dtype \(dtype))")
+            throw SafetensorsError.unsupportedDType(tensor: tensor, dtype: "\(dtype)")
         }
     }
 
@@ -202,8 +204,12 @@ final class SafetensorsMmap {
         case "F32": .float32
         case "F16": .float16
         case "BF16": .bfloat16
-        case "U32", "I32": .uint32
+        case "U32": .uint32
+        case "I32": .int32
+        case "U16": .uint16
+        case "I16": .int16
         case "U8": .uint8
+        case "I8": .int8
         default: nil
         }
     }
