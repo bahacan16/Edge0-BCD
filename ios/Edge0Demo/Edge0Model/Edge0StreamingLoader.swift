@@ -54,6 +54,12 @@ enum Edge0StreamingLoader {
         let configuration = try JSONDecoder().decode(
             E0Qwen35Configuration.self, from: configData)
 
+        // Constructing the model also constructs full-size expert layers —
+        // [256, out, in] per projection per layer, ~15 GB if it were real. It
+        // is not: MLX builds those initializers lazily, and step 3 below
+        // replaces the whole expert layer before anything evaluates them, so
+        // they never leave the graph. Nothing may call `eval` on this model
+        // until the experts have been swapped.
         let model = E0Qwen35MoEModel(configuration)
 
         let shards = try SafetensorsShardSet(directory: directory)
@@ -96,6 +102,7 @@ enum Edge0StreamingLoader {
             throw Edge0StreamingLoaderError.noExpertTensors(directory.lastPathComponent)
         }
 
+        // Safe now, and only now: the placeholder expert weights are gone.
         eval(model)
 
         // 4. LoRA, tokenizer, processor — as the stock factory would.
