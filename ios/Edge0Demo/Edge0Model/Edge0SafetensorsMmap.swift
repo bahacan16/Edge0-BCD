@@ -220,7 +220,7 @@ final class SafetensorsShardSet {
             (try? FileManager.default.contentsOfDirectory(
                 at: directory, includingPropertiesForKeys: nil)) ?? []
         for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
-        where file.pathExtension == "safetensors" {
+        where file.pathExtension == "safetensors" && !Edge0Adapters.isAdapterFile(file) {
             guard let shard = try? SafetensorsMmap(url: file) else { continue }
             shards.append(shard)
             for name in shard.entries.keys where index[name] == nil {
@@ -235,5 +235,31 @@ final class SafetensorsShardSet {
 
     func entry(for tensor: String) -> SafetensorsEntry? {
         index[tensor]?.entries[tensor]
+    }
+}
+
+/// Tells edge0's adapter tensors apart from the base checkpoint's.
+///
+/// Both Hugging Face repos ship `lora_edge0_*.safetensors` and
+/// `prerouter_edge0_*.safetensors` *inside the model directory* — that is the
+/// layout upstream documents. Every loader in this app and in mlx-swift-lm
+/// picks up weights by globbing `*.safetensors`, so without this filter the
+/// adapters are read as if they were model weights: the LoRA pairs and the
+/// prerouter's `layers.<n>.fc1.weight` heads have no counterpart in the module
+/// tree, and applying them fails outright.
+enum Edge0Adapters {
+    /// True for a file that holds adapters rather than base weights.
+    static func isAdapterFile(_ url: URL) -> Bool {
+        let name = url.lastPathComponent
+        return name.hasPrefix("lora_") || name.hasPrefix("prerouter_")
+    }
+
+    /// True for a tensor name that came from one of those files.
+    static func isAdapterTensor(_ key: String) -> Bool {
+        if key.hasSuffix(".lora_A") || key.hasSuffix(".lora_B") { return true }
+        if key.contains("prerouter") { return true }
+        // Prerouter heads are stored unprefixed as `layers.<n>.fc1.weight`;
+        // no base checkpoint key starts with a bare `layers.`.
+        return key.hasPrefix("layers.")
     }
 }

@@ -524,6 +524,14 @@ public class Edge0BailingModel: Module, LLMModel, KVCacheDimensionProvider {
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
         var weights = weights
 
+        // The stock loader globs every safetensors file in the model
+        // directory, which for edge0 includes the LoRA and prerouter adapters.
+        // They are applied separately (or not at all); left here they reach
+        // `update(parameters:verify:[.all])` as keys the model does not have.
+        for key in Array(weights.keys) where Edge0Adapters.isAdapterTensor(key) {
+            weights.removeValue(forKey: key)
+        }
+
         for key in Array(weights.keys) where key.contains(".mtp_") || key.contains("mtp.") {
             weights.removeValue(forKey: key)
         }

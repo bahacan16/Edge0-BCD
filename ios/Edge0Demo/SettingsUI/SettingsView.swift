@@ -47,6 +47,15 @@ struct SettingsView: View {
             if let report = models.loaded?.loraReport {
                 LabeledContent("Uygulanan adaptör", value: "\(report.appliedTargets.count)")
                     .font(.caption)
+                if !report.unmatchedTargets.isEmpty {
+                    // Silently dropped adapters would look like a plain quality
+                    // regression, so the count is surfaced rather than logged.
+                    LabeledContent(
+                        "Eşleşmeyen adaptör", value: "\(report.unmatchedTargets.count)"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(Theme.amber)
+                }
             }
             if let loaded = models.loaded {
                 LabeledContent(
@@ -136,6 +145,14 @@ struct SettingsView: View {
                 Text(ModelManager.formatBytes(ModelManager.physicalMemoryBytes))
                     .monospacedDigit()
             }
+            if Edge0ExpertCaches.layerCount > 0 {
+                let statistics = Edge0ExpertCaches.statistics
+                LabeledContent("Expert önbellek isabeti") {
+                    Text(hitRate(statistics))
+                        .monospacedDigit()
+                }
+                .font(.caption)
+            }
         } header: {
             Text("Çalışma zamanı")
         } footer: {
@@ -170,6 +187,15 @@ struct SettingsView: View {
                 "MLX Swift",
                 destination: URL(string: "https://github.com/ml-explore/mlx-swift")!)
         }
+    }
+
+    /// Share of expert reads served from RAM rather than from storage. A low
+    /// rate on long prompts is the signal that the cache budget is too small.
+    private func hitRate(_ statistics: (hits: Int, misses: Int)) -> String {
+        let total = statistics.hits + statistics.misses
+        guard total > 0 else { return "—" }
+        let percent = Double(statistics.hits) / Double(total) * 100
+        return String(format: "%%%.0f (%d/%d)", percent, statistics.hits, total)
     }
 
     private func formatCount(_ value: Int) -> String {
