@@ -12,8 +12,18 @@ import Foundation
 import MLX
 import MLXNN
 
-private func makeEdge0GatedDeltaKernel(hasMask: Bool) -> MLXFast.MLXFastKernel? {
+private func makeEdge0GatedDeltaKernel(
+    hasMask: Bool, perChannelDecay: Bool
+) -> MLXFast.MLXFastKernel? {
     let maskSource = hasMask ? "mask[b_idx * T + t]" : "true"
+    // KDA's decay is per channel (`g: [B, T, Hv, Dk]`); Qwen3-Next's is one
+    // scalar per head (`g: [B, T, Hv]`). Same recurrence, different stride.
+    let decayBase =
+        perChannelDecay
+        ? "auto g_ = g + b_idx * T * Hv * Dk + hv_idx * Dk;"
+        : "auto g_ = g + b_idx * T * Hv;"
+    let decayValue = perChannelDecay ? "g_[s_idx]" : "g_[hv_idx]"
+    let decayAdvance = perChannelDecay ? "g_ += Hv * Dk;" : "g_ += Hv;"
 
     let source = """
             auto n = thread_position_in_grid.z;
@@ -31,7 +41,7 @@ private func makeEdge0GatedDeltaKernel(hasMask: Bool) -> MLXFast.MLXFastKernel? 
             auto dk_idx = thread_position_in_threadgroup.x;
             auto dv_idx = thread_position_in_grid.y;
 
-            auto g_ = g + b_idx * T * Hv;
+            \(decayBase)
             auto beta_ = beta + b_idx * T * Hv;
 
             auto i_state = state_in + (n * Dv + dv_idx) * Dk;
@@ -52,7 +62,7 @@ private func makeEdge0GatedDeltaKernel(hasMask: Bool) -> MLXFast.MLXFastKernel? 
                   float kv_compensation = 0.0f;
                   for (int i = 0; i < n_per_t; ++i) {
                     auto s_idx = n_per_t * dk_idx + i;
-                    state[i] = state[i] * g_[hv_idx];
+                    state[i] = state[i] * \(decayValue);
                     auto product = state[i] * k_[s_idx];
                     auto corrected = product - kv_compensation;
                     auto next_sum = kv_mem + corrected;
@@ -81,7 +91,7 @@ private func makeEdge0GatedDeltaKernel(hasMask: Bool) -> MLXFast.MLXFastKernel? 
               k_ += Hk * Dk;
               v_ += Hv * Dv;
               y += Hv * Dv;
-              g_ += Hv;
+              \(decayAdvance)
               beta_ += Hv;
             }
             for (int i = 0; i < n_per_t; ++i) {
@@ -94,7 +104,7 @@ private func makeEdge0GatedDeltaKernel(hasMask: Bool) -> MLXFast.MLXFastKernel? 
     if hasMask {
         inputNames.append("mask")
     }
-    let suffix = hasMask ? "_mask" : ""
+    let suffix = (hasMask ? "_mask" : "") + (perChannelDecay ? "_chan" : "")
 
     return MLXFast.metalKernel(
         name: "edge0_gated_delta_step\(suffix)",
@@ -106,11 +116,25 @@ private func makeEdge0GatedDeltaKernel(hasMask: Bool) -> MLXFast.MLXFastKernel? 
 
 private final class Edge0GatedDeltaKernelManager: Sendable {
     static let shared = Edge0GatedDeltaKernelManager()
-    let kernel: MLXFast.MLXFastKernel?
-    let kernelMasked: MLXFast.MLXFastKernel?
+    let perHead: MLXFast.MLXFastKernel?
+    let perHeadMasked: MLXFast.MLXFastKernel?
+    let perChannel: MLXFast.MLXFastKernel?
+    let perChannelMasked: MLXFast.MLXFastKernel?
+
     private init() {
-        kernel = makeEdge0GatedDeltaKernel(hasMask: false)
-        kernelMasked = makeEdge0GatedDeltaKernel(hasMask: true)
+        perHead = makeEdge0GatedDeltaKernel(hasMask: false, perChannelDecay: false)
+        perHeadMasked = makeEdge0GatedDeltaKernel(hasMask: true, perChannelDecay: false)
+        perChannel = makeEdge0GatedDeltaKernel(hasMask: false, perChannelDecay: true)
+        perChannelMasked = makeEdge0GatedDeltaKernel(hasMask: true, perChannelDecay: true)
+    }
+
+    func kernel(masked: Bool, perChannelDecay: Bool) -> MLXFast.MLXFastKernel? {
+        switch (masked, perChannelDecay) {
+        case (false, false): perHead
+        case (true, false): perHeadMasked
+        case (false, true): perChannel
+        case (true, true): perChannelMasked
+        }
     }
 }
 
@@ -127,15 +151,15 @@ func edge0GatedDeltaKernel(
     let inputType = q.dtype
     let stateType = state.dtype
 
-    let selectedKernel: MLXFast.MLXFastKernel?
+    // `g` is [B, T, Hv] for a per-head decay and [B, T, Hv, Dk] for KDA's
+    // per-channel one.
+    let perChannelDecay = g.ndim == 4
     var inputs: [MLXArray] = [q, k, v, g, beta, state, MLXArray(T)]
-    if let mask {
-        selectedKernel = Edge0GatedDeltaKernelManager.shared.kernelMasked
-        inputs.append(mask)
-    } else {
-        selectedKernel = Edge0GatedDeltaKernelManager.shared.kernel
-    }
-    guard let kernel = selectedKernel else {
+    if mask != nil { inputs.append(mask!) }
+    guard
+        let kernel = Edge0GatedDeltaKernelManager.shared.kernel(
+            masked: mask != nil, perChannelDecay: perChannelDecay)
+    else {
         fatalError("edge0 gated delta kernel not available")
     }
     let outputs = kernel(
@@ -239,7 +263,10 @@ func edge0GatedDeltaUpdate(
     if state.dtype != .float32 {
         state = state.asType(.float32)
     }
-    if Edge0GatedDeltaKernelManager.shared.kernel != nil, Dk % 32 == 0 {
+    let perChannelDecay = g.ndim == 4
+    let fused = Edge0GatedDeltaKernelManager.shared.kernel(
+        masked: mask != nil, perChannelDecay: perChannelDecay)
+    if fused != nil, Dk % 32 == 0 {
         return edge0GatedDeltaKernel(q: q, k: k, v: v, g: g, beta: beta, state: state, mask: mask)
     }
     return edge0GatedDeltaOps(q: q, k: k, v: v, g: g, beta: beta, state: state, mask: mask)

@@ -28,7 +28,10 @@ final class AppSettings {
         didSet { store(expertStreaming, "expertStreaming") }
     }
 
-    /// How many experts per layer stay pinned in RAM on top of the active set.
+    /// How many experts each layer keeps in RAM. A decode step touches only K
+    /// of them, but prompt processing walks many more, so a larger cache is
+    /// what keeps prefill from re-reading the same experts over and over.
+    /// Roughly 1.5 MB per expert per layer on the 35B tier.
     var hotExpertSlots: Int {
         didSet { store(hotExpertSlots, "hotExpertSlots") }
     }
@@ -86,7 +89,7 @@ final class AppSettings {
         useLoRA = d.object(forKey: Self.key("useLoRA")) as? Bool ?? true
         expertStreaming =
             d.object(forKey: Self.key("expertStreaming")) as? Bool ?? tier.requiresExpertStreaming
-        hotExpertSlots = d.object(forKey: Self.key("hotExpertSlots")) as? Int ?? 4
+        hotExpertSlots = d.object(forKey: Self.key("hotExpertSlots")) as? Int ?? 16
 
         temperature = d.object(forKey: Self.key("temperature")) as? Double
             ?? Double(defaults.temperature)

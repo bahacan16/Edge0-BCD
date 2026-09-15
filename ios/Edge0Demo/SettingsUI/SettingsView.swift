@@ -120,6 +120,9 @@ struct SettingsView: View {
                 range: 0...1024, step: 32, unit: "MB")
             Toggle("Expert akışı (SSD offload)", isOn: settings.expertStreaming)
                 .disabled(models.activeTier?.requiresExpertStreaming == true)
+            StepperRow(
+                title: "Katman başına expert önbelleği", value: settings.hotExpertSlots,
+                range: 4...64, step: 4)
             LabeledContent("MLX aktif bellek") {
                 Text(ModelManager.formatBytes(ModelManager.mlxActiveMemoryBytes))
                     .monospacedDigit()
@@ -136,7 +139,11 @@ struct SettingsView: View {
             Text("Çalışma zamanı")
         } footer: {
             Text(
-                "35B tier'ında expert ağırlıkları bellekte tutulamaz; depolamadan akıtılır ve kapatılamaz."
+                """
+                35B tier'ında expert ağırlıkları bellekte tutulamaz; depolamadan akıtılır ve \
+                kapatılamaz. Önbellek büyüdükçe uzun promptlar hızlanır, bellek kullanımı artar \
+                (35B'de katman başına ~1,5 MB).
+                """
             )
         }
         .id(memoryTick)
