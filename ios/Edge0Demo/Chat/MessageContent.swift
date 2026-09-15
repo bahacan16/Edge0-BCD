@@ -161,7 +161,9 @@ struct ParsedMessage: Equatable {
             if trimmed.hasPrefix("#") {
                 let hashes = trimmed.prefix { $0 == "#" }.count
                 let rest = trimmed.dropFirst(hashes).trimmingCharacters(in: .whitespaces)
-                if hashes <= 6, !rest.isEmpty {
+                // Markdown wants a space after the hashes; without that check a
+                // line like "#1 sırada" becomes a heading.
+                if hashes <= 6, trimmed.dropFirst(hashes).first == " ", !rest.isEmpty {
                     flushParagraph()
                     emit(.heading(level: min(hashes, 3)), rest)
                     continue

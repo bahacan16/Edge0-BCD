@@ -113,6 +113,14 @@ private struct ReasoningView: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+        // Reasoning can run for a while before a single word of the answer
+        // appears, so it is shown while it happens and folded away once the
+        // answer takes over. Tapping after that reopens it.
+        .onAppear { expanded = isThinking }
+        .onChange(of: isThinking) { _, nowThinking in
+            guard !nowThinking else { return }
+            withAnimation(.easeInOut(duration: 0.2)) { expanded = false }
+        }
     }
 }
 
