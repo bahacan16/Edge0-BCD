@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ChatView: View {
     @Environment(ModelManager.self) private var models
@@ -125,6 +126,12 @@ private struct MessageRow: View {
     let message: ChatMessage
     let showMetrics: Bool
 
+    @State private var copied = false
+
+    private var parsed: ParsedMessage {
+        ParsedMessage.parse(message.text)
+    }
+
     var body: some View {
         VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 6) {
             HStack {
@@ -133,60 +140,120 @@ private struct MessageRow: View {
                 if message.role == .assistant { Spacer(minLength: 44) }
             }
 
-            if showMetrics, let metrics = message.metrics {
-                HStack(spacing: 6) {
-                    MetricChip(
-                        icon: "speedometer",
-                        value: String(format: "%.1f", metrics.tokensPerSecond), label: "tok/s",
-                        tint: Theme.mint)
-                    MetricChip(
-                        icon: "timer",
-                        value: String(format: "%.0f", metrics.timeToFirstTokenMS), label: "ms",
-                        tint: Theme.amber)
-                    MetricChip(
-                        icon: "number", value: "\(metrics.generatedTokens)", label: "token",
-                        tint: Theme.cyan)
-                    MetricChip(
-                        icon: "memorychip",
-                        value: ModelManager.formatBytes(metrics.peakMemoryBytes),
-                        tint: Theme.violet)
-                }
-                .padding(.leading, 2)
+            if message.role == .assistant, !message.isStreaming, !message.text.isEmpty {
+                footer
             }
         }
         .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
+        .contextMenu {
+            Button {
+                copy()
+            } label: {
+                Label("Kopyala", systemImage: "doc.on.doc")
+            }
+            ShareLink(item: message.text) {
+                Label("Paylaş", systemImage: "square.and.arrow.up")
+            }
+        }
     }
 
+    @ViewBuilder
     private var bubble: some View {
-        Text(displayText)
-            .textSelection(.enabled)
-            .font(.system(size: 15.5))
-            .foregroundStyle(message.role == .user ? Color.white : Color.primary)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background {
-                if message.role == .user {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(Theme.userBubble)
-                } else {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(Color(.secondarySystemGroupedBackground))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(
-                                    message.failed
-                                        ? Theme.danger.opacity(0.5) : Color.primary.opacity(0.06),
-                                    lineWidth: 1)
-                        )
+        Group {
+            if message.role == .user {
+                Text(message.text)
+                    .textSelection(.enabled)
+                    .font(.system(size: 15.5))
+                    .foregroundStyle(Color.white)
+            } else {
+                HStack(alignment: .bottom, spacing: 3) {
+                    MessageBodyView(parsed: parsed, isStreaming: message.isStreaming)
+                        .textSelection(.enabled)
+                        .foregroundStyle(Color.primary)
+                    if message.isStreaming {
+                        StreamingCaret()
+                    }
                 }
             }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background {
+            if message.role == .user {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Theme.userBubble)
+            } else {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color(.secondarySystemGroupedBackground))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(
+                                message.failed
+                                    ? Theme.danger.opacity(0.5) : Color.primary.opacity(0.06),
+                                lineWidth: 1)
+                    )
+            }
+        }
     }
 
-    private var displayText: String {
-        if message.isStreaming && message.text.isEmpty {
-            return "…"
+    private var footer: some View {
+        HStack(spacing: 6) {
+            Button(action: copy) {
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(copied ? Theme.mint : .secondary)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.primary.opacity(0.06)))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Yanıtı kopyala")
+
+            if showMetrics, let metrics = message.metrics {
+                MetricChip(
+                    icon: "speedometer",
+                    value: String(format: "%.1f", metrics.tokensPerSecond), label: "tok/s",
+                    tint: Theme.mint)
+                MetricChip(
+                    icon: "timer",
+                    value: String(format: "%.0f", metrics.timeToFirstTokenMS), label: "ms",
+                    tint: Theme.amber)
+                MetricChip(
+                    icon: "number", value: "\(metrics.generatedTokens)", label: "token",
+                    tint: Theme.cyan)
+                MetricChip(
+                    icon: "memorychip",
+                    value: ModelManager.formatBytes(metrics.peakMemoryBytes),
+                    tint: Theme.violet)
+            }
         }
-        return message.text + (message.isStreaming ? " ▍" : "")
+        .padding(.leading, 2)
+    }
+
+    private func copy() {
+        UIPasteboard.general.string = message.text
+        copied = true
+        Task {
+            try? await Task.sleep(for: .seconds(1.6))
+            copied = false
+        }
+    }
+}
+
+/// The blinking block that marks where the next token will land.
+private struct StreamingCaret: View {
+    @State private var on = true
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 1, style: .continuous)
+            .fill(Theme.cyan)
+            .frame(width: 7, height: 15)
+            .opacity(on ? 1 : 0.15)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.55).repeatForever(autoreverses: true)) {
+                    on = false
+                }
+            }
     }
 }
 
