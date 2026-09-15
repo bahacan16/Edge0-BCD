@@ -29,5 +29,14 @@ struct RootView: View {
         .environment(models)
         .environment(settings)
         .environment(conversations)
+        .task {
+            // Reading a checkpoint back off disk takes long enough that having
+            // to ask for it every launch is a chore. Only ever loads something
+            // already downloaded — this never starts a download.
+            guard settings.autoLoadLastModel, models.phase == .idle, models.loaded == nil,
+                models.downloadedTiers.contains(settings.selectedTier)
+            else { return }
+            models.prepare(tier: settings.selectedTier, settings: settings)
+        }
     }
 }

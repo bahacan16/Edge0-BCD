@@ -36,6 +36,7 @@ struct SettingsView: View {
                 Text(models.activeTier?.displayName ?? "Yok")
                     .foregroundStyle(.secondary)
             }
+            Toggle("Açılışta son modeli yükle", isOn: settings.autoLoadLastModel)
             Toggle("Recover-LoRA adaptörleri", isOn: settings.useLoRA)
             if models.activeTier != nil {
                 Text(

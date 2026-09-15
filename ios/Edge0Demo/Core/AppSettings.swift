@@ -38,6 +38,13 @@ final class AppSettings {
         didSet { store(expertCacheBudgetMB, "expertCacheBudgetMB") }
     }
 
+    /// Load the last used tier at launch, if it is already on disk. Only ever
+    /// touches a downloaded checkpoint, so it never starts a download by
+    /// itself.
+    var autoLoadLastModel: Bool {
+        didSet { store(autoLoadLastModel, "autoLoadLastModel") }
+    }
+
     // MARK: Sampling
 
     var temperature: Double {
@@ -94,6 +101,8 @@ final class AppSettings {
         expertCacheBudgetMB =
             d.object(forKey: Self.key("expertCacheBudgetMB")) as? Int
             ?? Self.defaultExpertCacheBudgetMB
+
+        autoLoadLastModel = d.object(forKey: Self.key("autoLoadLastModel")) as? Bool ?? true
 
         temperature = d.object(forKey: Self.key("temperature")) as? Double
             ?? Double(defaults.temperature)
