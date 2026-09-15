@@ -144,7 +144,7 @@ enum Edge0StreamingLoader {
 
 /// Mirrors mlx-swift-lm's own (private) `LLMUserInputProcessor`.
 struct Edge0UserInputProcessor: UserInputProcessor {
-    let tokenizer: any Tokenizer
+    let tokenizer: any Tokenizers.Tokenizer
     let messageGenerator: any MessageGenerator
 
     func prepare(input: UserInput) throws -> LMInput {
@@ -154,7 +154,9 @@ struct Edge0UserInputProcessor: UserInputProcessor {
                 messages: messages, tools: input.tools,
                 additionalContext: input.additionalContext)
             return LMInput(tokens: MLXArray(tokens))
-        } catch TokenizerError.missingChatTemplate {
+        } catch {
+            // Most likely a checkpoint with no chat template; fall back to the
+            // same plain-text join the stock processor uses.
             let prompt =
                 messages
                 .compactMap { $0["content"] as? String }

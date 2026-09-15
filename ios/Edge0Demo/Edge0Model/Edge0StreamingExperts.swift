@@ -169,6 +169,19 @@ final class ExpertSlotPool {
     }
 }
 
+/// The selected experts, stacked into one slot buffer per projection.
+private struct StackedSlots {
+    let gateWeight: MLXArray
+    let gateScales: MLXArray
+    let gateBiases: MLXArray?
+    let upWeight: MLXArray
+    let upScales: MLXArray
+    let upBiases: MLXArray?
+    let downWeight: MLXArray
+    let downScales: MLXArray
+    let downBiases: MLXArray?
+}
+
 /// A `SwitchGLU` whose expert weights live on disk.
 ///
 /// The superclass is initialized with 1×1×1 placeholder projections so it never
@@ -178,6 +191,7 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
     private let pool: ExpertSlotPool
     private let quantization: ExpertQuantization
     private let activationFunction: (MLXArray) -> MLXArray
+    private var lastSlots: (key: [Int32], slots: StackedSlots)?
 
     init(
         shards: SafetensorsShardSet,
@@ -192,7 +206,37 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
         super.init(inputDims: 1, hiddenDims: 1, numExperts: 1, bias: false)
     }
 
+    /// Above this many distinct experts in one call, the token dimension is
+    /// split and processed in pieces. Without it a long prompt can reference
+    /// every expert at once, which would stack the entire layer — the exact
+    /// allocation this class exists to avoid.
+    private static let maxExpertsPerCall = 32
+
     override func callAsFunction(_ x: MLXArray, _ indices: MLXArray) -> MLXArray {
+        let tokenCount = indices.dim(-2)
+        if tokenCount > 1, distinctExpertCount(indices) > Self.maxExpertsPerCall {
+            return splitOverTokens(x, indices)
+        }
+        return project(x, indices)
+    }
+
+    private func distinctExpertCount(_ indices: MLXArray) -> Int {
+        Set(indices.asArray(Int32.self)).count
+    }
+
+    /// Halves the sequence until each piece touches few enough experts.
+    private func splitOverTokens(_ x: MLXArray, _ indices: MLXArray) -> MLXArray {
+        let tokenAxis = x.ndim - 2
+        let tokenCount = x.dim(tokenAxis)
+        let middle = tokenCount / 2
+        let first = callAsFunction(
+            x[.ellipsis, ..<middle, 0...], indices[.ellipsis, ..<middle, 0...])
+        let second = callAsFunction(
+            x[.ellipsis, middle..., 0...], indices[.ellipsis, middle..., 0...])
+        return MLX.concatenated([first, second], axis: tokenAxis)
+    }
+
+    private func project(_ x: MLXArray, _ indices: MLXArray) -> MLXArray {
         let requested = indices.asArray(Int32.self)
         let unique = Array(Set(requested)).sorted()
         var slotOf: [Int32: Int32] = [:]
@@ -200,12 +244,9 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
 
         for expert in unique { pool.prefetch(expert: expert) }
 
-        var slices: [ExpertSlice] = []
-        slices.reserveCapacity(unique.count)
+        let slots: StackedSlots
         do {
-            for expert in unique {
-                slices.append(try pool.slice(for: expert))
-            }
+            slots = try stackedSlots(for: unique)
         } catch {
             // Losing an expert would silently corrupt the answer, so fail loudly
             // rather than routing through zeros.
@@ -218,24 +259,44 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
         var h = MLX.expandedDimensions(x, axes: [-2, -3])
 
         let gate = gather(
-            h, weight: MLX.stacked(slices.map(\.gateWeight)),
-            scales: MLX.stacked(slices.map(\.gateScales)),
-            biases: stackedOptional(slices.map(\.gateBiases)),
+            h, weight: slots.gateWeight, scales: slots.gateScales, biases: slots.gateBiases,
             indices: slotIndices)
         let up = gather(
-            h, weight: MLX.stacked(slices.map(\.upWeight)),
-            scales: MLX.stacked(slices.map(\.upScales)),
-            biases: stackedOptional(slices.map(\.upBiases)),
+            h, weight: slots.upWeight, scales: slots.upScales, biases: slots.upBiases,
             indices: slotIndices)
 
         h = gather(
             activationFunction(gate) * up,
-            weight: MLX.stacked(slices.map(\.downWeight)),
-            scales: MLX.stacked(slices.map(\.downScales)),
-            biases: stackedOptional(slices.map(\.downBiases)),
+            weight: slots.downWeight, scales: slots.downScales, biases: slots.downBiases,
             indices: slotIndices)
 
         return MLX.squeezed(h, axis: -2)
+    }
+
+    /// Stacking the selected experts is itself a copy, and consecutive tokens
+    /// very often route to the same set, so the last stack is reused.
+    private func stackedSlots(for experts: [Int32]) throws -> StackedSlots {
+        if let cached = lastSlots, cached.key == experts {
+            return cached.slots
+        }
+        var slices: [ExpertSlice] = []
+        slices.reserveCapacity(experts.count)
+        for expert in experts {
+            slices.append(try pool.slice(for: expert))
+        }
+        let slots = StackedSlots(
+            gateWeight: MLX.stacked(slices.map(\.gateWeight)),
+            gateScales: MLX.stacked(slices.map(\.gateScales)),
+            gateBiases: stackedOptional(slices.map(\.gateBiases)),
+            upWeight: MLX.stacked(slices.map(\.upWeight)),
+            upScales: MLX.stacked(slices.map(\.upScales)),
+            upBiases: stackedOptional(slices.map(\.upBiases)),
+            downWeight: MLX.stacked(slices.map(\.downWeight)),
+            downScales: MLX.stacked(slices.map(\.downScales)),
+            downBiases: stackedOptional(slices.map(\.downBiases))
+        )
+        lastSlots = (experts, slots)
+        return slots
     }
 
     private func gather(
