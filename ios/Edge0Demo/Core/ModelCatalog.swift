@@ -2,7 +2,7 @@ import Foundation
 
 /// The two tiers edge0 publishes. Numbers come from the upstream repo's
 /// model adapters (`src/edge0/models/edge0_{8b,35b}/__init__.py`) and README.
-enum Edge0Tier: String, CaseIterable, Identifiable, Sendable {
+enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
     case edge0_8b = "edge0-8b"
     case edge0_35b = "edge0-35b"
 

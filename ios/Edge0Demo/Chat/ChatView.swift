@@ -4,9 +4,12 @@ import UIKit
 struct ChatView: View {
     @Environment(ModelManager.self) private var models
     @Environment(AppSettings.self) private var settings
+    @Environment(ConversationStore.self) private var conversations
     @State private var viewModel: ChatViewModel?
+    @State private var showingHistory = false
     @FocusState private var composerFocused: Bool
     @Binding var selectedTab: RootTab
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack {
@@ -24,11 +27,22 @@ struct ChatView: View {
         }
         .onAppear {
             if viewModel == nil {
-                viewModel = ChatViewModel(models: models, settings: settings)
+                viewModel = ChatViewModel(
+                    models: models, settings: settings, store: conversations)
             }
         }
         .onChange(of: models.activeTier) { _, _ in
             viewModel?.modelChanged()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // Leaving the app is the one moment a half-finished transcript can
+            // be lost, so it is written out even mid-answer.
+            if phase != .active { viewModel?.persist() }
+        }
+        .sheet(isPresented: $showingHistory) {
+            HistoryView(currentID: viewModel?.conversationID ?? UUID()) { conversation in
+                viewModel?.open(conversation)
+            }
         }
     }
 
@@ -107,11 +121,20 @@ struct ChatView: View {
         }
         ToolbarItem(placement: .topBarTrailing) {
             Button {
+                showingHistory = true
+            } label: {
+                Image(systemName: "clock.arrow.circlepath")
+            }
+            .accessibilityLabel("Geçmiş")
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            Button {
                 viewModel?.newConversation()
             } label: {
                 Image(systemName: "square.and.pencil")
             }
             .disabled(viewModel?.messages.isEmpty ?? true)
+            .accessibilityLabel("Yeni sohbet")
         }
     }
 

@@ -4,20 +4,20 @@ import MLX
 import MLXLMCommon
 import SwiftUI
 
-struct ChatMessage: Identifiable, Equatable {
-    enum Role: Equatable {
+struct ChatMessage: Identifiable, Equatable, Codable {
+    enum Role: String, Equatable, Codable {
         case user, assistant
     }
 
-    let id = UUID()
-    let role: Role
+    var id = UUID()
+    var role: Role
     var text: String
     var metrics: GenerationMetrics?
     var isStreaming: Bool = false
     var failed: Bool = false
 }
 
-struct GenerationMetrics: Equatable {
+struct GenerationMetrics: Equatable, Codable {
     var tokensPerSecond: Double
     var timeToFirstTokenMS: Double
     var promptTokens: Int
@@ -37,16 +37,23 @@ final class ChatViewModel {
     var liveTokensPerSecond: Double = 0
     var liveTokenCount: Int = 0
 
+    /// Identity of the transcript on screen, so saving updates the same file
+    /// rather than piling up copies.
+    private(set) var conversationID = UUID()
+    private var conversationCreatedAt = Date()
+
     private let models: ModelManager
     private let settings: AppSettings
+    private let store: ConversationStore
     private var session: ChatSession?
     private var generationTask: Task<Void, Never>?
     /// Settings that the current session was built with; a change rebuilds it.
     private var sessionSignature: String?
 
-    init(models: ModelManager, settings: AppSettings) {
+    init(models: ModelManager, settings: AppSettings, store: ConversationStore) {
         self.models = models
         self.settings = settings
+        self.store = store
     }
 
     var canSend: Bool {
@@ -112,6 +119,7 @@ final class ChatViewModel {
 
             self.isGenerating = false
             self.generationTask = nil
+            self.persist()
             Haptics.success(enabled: self.settings.hapticsEnabled)
         }
     }
@@ -126,23 +134,60 @@ final class ChatViewModel {
                 messages[index].text = "(durduruldu)"
             }
         }
+        persist()
     }
 
-    /// Clears the transcript and the model's KV cache.
+    /// Files the transcript away and starts an empty one.
     func newConversation() {
         stop()
+        persist()
         messages.removeAll()
         errorMessage = nil
-        let session = self.session
-        self.session = nil
-        sessionSignature = nil
-        Task { await session?.clear() }
+        conversationID = UUID()
+        conversationCreatedAt = Date()
+        discardSession()
+    }
+
+    /// Puts a saved transcript back on screen. The next turn rebuilds the
+    /// session from it, so the model is prefilled with what was said before
+    /// rather than answering out of nowhere.
+    func open(_ conversation: Conversation) {
+        guard conversation.id != conversationID else { return }
+        stop()
+        persist()
+        messages = conversation.messages
+        errorMessage = nil
+        conversationID = conversation.id
+        conversationCreatedAt = conversation.createdAt
+        discardSession()
+    }
+
+    /// Writes the transcript to disk. Called when a turn ends, not per token.
+    func persist() {
+        guard !messages.isEmpty else { return }
+        let title = messages.first { $0.role == .user }.map { Conversation.title(from: $0.text) }
+            ?? "Yeni sohbet"
+        store.save(
+            Conversation(
+                id: conversationID,
+                title: title,
+                tier: models.activeTier ?? settings.selectedTier,
+                createdAt: conversationCreatedAt,
+                updatedAt: Date(),
+                messages: messages
+            ))
     }
 
     /// Called when the loaded model changes so the next turn starts clean.
     func modelChanged() {
-        session = nil
+        discardSession()
+    }
+
+    private func discardSession() {
+        let session = self.session
+        self.session = nil
         sessionSignature = nil
+        Task { await session?.clear() }
     }
 
     // MARK: Session
@@ -152,7 +197,15 @@ final class ChatViewModel {
         if let session, sessionSignature == signature {
             return session
         }
-        guard let fresh = models.makeSession(settings: settings) else { return nil }
+        // Rebuilding — because a setting changed, or because a saved
+        // transcript was opened — must not cost the model its memory of the
+        // conversation, so the new session is seeded with what is on screen.
+        let history = Conversation(
+            title: "", tier: nil, messages: messages.filter { !$0.isStreaming }
+        ).history
+        guard let fresh = models.makeSession(settings: settings, history: history) else {
+            return nil
+        }
         session = fresh
         sessionSignature = signature
         return fresh

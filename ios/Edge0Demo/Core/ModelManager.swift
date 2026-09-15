@@ -128,12 +128,29 @@ final class ModelManager {
     }
 
     /// Builds a fresh chat session against the loaded model.
-    func makeSession(settings: AppSettings) -> ChatSession? {
+    ///
+    /// `history` re-hydrates a transcript: the session prefills those turns on
+    /// its next response, so resuming a saved conversation gives the model the
+    /// same context it had when the conversation was live. The system prompt is
+    /// passed separately and must not appear in `history`.
+    func makeSession(settings: AppSettings, history: [Chat.Message] = []) -> ChatSession? {
         guard let loaded else { return nil }
         let instructions = settings.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let system: String? = instructions.isEmpty ? nil : instructions
+
+        if history.isEmpty {
+            return ChatSession(
+                loaded.container,
+                instructions: system,
+                generateParameters: settings.generateParameters,
+                additionalContext: ["enable_thinking": settings.thinkingMode]
+            )
+        }
+
         return ChatSession(
             loaded.container,
-            instructions: instructions.isEmpty ? nil : instructions,
+            instructions: system,
+            history: history,
             generateParameters: settings.generateParameters,
             additionalContext: ["enable_thinking": settings.thinkingMode]
         )

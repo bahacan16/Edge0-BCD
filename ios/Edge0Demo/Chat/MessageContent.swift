@@ -34,6 +34,10 @@ struct ParsedMessage: Equatable {
     /// True while a think block is still open — i.e. the model is reasoning
     /// right now and the answer has not started.
     var reasoningIsOpen: Bool = false
+    /// Everything outside the think tags, verbatim. This is what goes back
+    /// into a re-hydrated chat history — rejoining the parsed blocks would
+    /// drop code fences and list markers.
+    var answer: String = ""
     var blocks: [MessageBlock] = []
 
     var hasReasoning: Bool {
@@ -47,6 +51,7 @@ struct ParsedMessage: Equatable {
         return ParsedMessage(
             reasoning: split.reasoning,
             reasoningIsOpen: split.isOpen,
+            answer: split.answer,
             blocks: parseBlocks(split.answer)
         )
     }

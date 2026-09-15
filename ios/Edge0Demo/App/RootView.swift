@@ -7,6 +7,7 @@ enum RootTab: Hashable {
 struct RootView: View {
     @State private var models = ModelManager()
     @State private var settings = AppSettings.shared
+    @State private var conversations = ConversationStore()
     @State private var tab: RootTab = .chat
 
     var body: some View {
@@ -27,5 +28,6 @@ struct RootView: View {
         .tint(Theme.blue)
         .environment(models)
         .environment(settings)
+        .environment(conversations)
     }
 }
