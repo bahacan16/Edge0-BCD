@@ -95,6 +95,12 @@ public struct Edge0BailingConfiguration: Codable, Sendable {
         case normTopkProb = "norm_topk_prob"
         case routedScalingFactor = "routed_scaling_factor"
         case moeRouterEnableExpertBias = "moe_router_enable_expert_bias"
+    }
+
+    /// Keys this type reads but does not store. They live apart from
+    /// `CodingKeys` because a case there with no matching property blocks the
+    /// synthesized `Encodable` conformance.
+    private enum InspectionKeys: String, CodingKey {
         case ropeScaling = "rope_scaling"
     }
 
@@ -106,7 +112,10 @@ public struct Edge0BailingConfiguration: Codable, Sendable {
         // pretending to honour it. Doing the same here keeps a future
         // checkpoint from loading and then being quietly wrong at long
         // context, which is not a failure anyone would trace back to this.
-        if c.contains(.ropeScaling), (try? c.decodeNil(forKey: .ropeScaling)) == false {
+        let inspection = try decoder.container(keyedBy: InspectionKeys.self)
+        if inspection.contains(.ropeScaling),
+            (try? inspection.decodeNil(forKey: .ropeScaling)) == false
+        {
             throw Edge0ConfigurationError.unsupportedRopeScaling
         }
 
