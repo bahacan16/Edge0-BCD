@@ -34,9 +34,33 @@ final class ModelManager {
     private(set) var freeDiskSpace: Int64 = 0
 
     private var loadTask: Task<Void, Never>?
+    private var memoryWarningObserver: (any NSObjectProtocol)?
 
     init() {
         refreshStorage()
+        observeMemoryPressure()
+    }
+
+    deinit {
+        if let memoryWarningObserver {
+            NotificationCenter.default.removeObserver(memoryWarningObserver)
+        }
+    }
+
+    // MARK: Memory pressure
+
+    /// When iOS warns, the app has seconds to hand memory back before it is
+    /// killed. The streamed expert caches are the largest thing that can be
+    /// dropped without losing the model: the next step pages those weights
+    /// back in from the mapping, so the answer is unaffected, only slower.
+    private func observeMemoryPressure() {
+        memoryWarningObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil, queue: .main
+        ) { _ in
+            MLX.GPU.clearCache()
+            Edge0ExpertCaches.purge()
+        }
     }
 
     // MARK: Storage
@@ -88,7 +112,7 @@ final class ModelManager {
                     tier: tier,
                     applyLoRA: settings.useLoRA,
                     gpuCacheLimitMB: settings.gpuCacheLimitMB,
-                    hotExpertSlots: settings.hotExpertSlots,
+                    expertCacheBudgetMB: settings.expertCacheBudgetMB,
                     streamExperts: settings.expertStreaming,
                     onProgress: { progress in
                         Task { @MainActor [weak self] in

@@ -122,8 +122,8 @@ struct SettingsView: View {
                 .disabled(!(models.activeTier ?? settings.wrappedValue.selectedTier)
                     .supportsExpertStreaming)
             StepperRow(
-                title: "Katman başına expert önbelleği", value: settings.hotExpertSlots,
-                range: 4...64, step: 4)
+                title: "Expert önbelleği", value: settings.expertCacheBudgetMB,
+                range: 128...2048, step: 128, unit: "MB")
             LabeledContent("MLX aktif bellek") {
                 Text(ModelManager.formatBytes(ModelManager.mlxActiveMemoryBytes))
                     .monospacedDigit()
@@ -142,8 +142,9 @@ struct SettingsView: View {
             Text(
                 """
                 35B tier'ında expert ağırlıkları bellekte tutulamaz; depolamadan akıtılır ve \
-                kapatılamaz. Önbellek büyüdükçe uzun promptlar hızlanır, bellek kullanımı artar \
-                (35B'de katman başına ~1,5 MB).
+                kapatılamaz. Önbellek bütçesi tüm MoE katmanları arasında paylaşılır: büyüttükçe \
+                uzun promptlar hızlanır, bellek kullanımı artar. Cihaz bellek uyarısı verirse \
+                önbellek otomatik boşaltılır.
                 """
             )
         }

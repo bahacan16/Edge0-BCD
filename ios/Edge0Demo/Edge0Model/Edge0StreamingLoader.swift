@@ -44,7 +44,7 @@ enum Edge0StreamingLoader {
         tier: Edge0Tier,
         directory: URL,
         tokenizerLoader: any TokenizerLoader,
-        hotSlotsPerLayer: Int,
+        expertCacheBudgetBytes: Int,
         loraURL: URL?
     ) async throws -> (context: ModelContext, loraReport: Edge0LoRAReport?) {
         let configURL = directory.appending(component: "config.json")
@@ -90,7 +90,7 @@ enum Edge0StreamingLoader {
 
         // 3. Route every MoE block through the streaming expert pool.
         let installed = installStreamingExperts(
-            in: model, shards: shards, hotSlots: hotSlotsPerLayer,
+            in: model, shards: shards, budgetBytes: expertCacheBudgetBytes,
             groupSize: quantization?.groupSize ?? 64, bits: quantization?.bits ?? 4)
         guard installed > 0 else {
             throw Edge0StreamingLoaderError.noExpertTensors(directory.lastPathComponent)
@@ -120,25 +120,41 @@ enum Edge0StreamingLoader {
 
     /// Replaces each MoE block's resident expert layer with a streaming one.
     /// Returns how many blocks were converted.
+    ///
+    /// The cache is sized in bytes rather than in experts. The budget is what
+    /// the user actually cares about, and it has to be split across every MoE
+    /// layer: forty layers each holding sixteen experts is not "sixteen
+    /// experts", it is forty times that, and on this checkpoint it is well over
+    /// a gigabyte.
     private static func installStreamingExperts(
-        in model: Module, shards: SafetensorsShardSet, hotSlots: Int, groupSize: Int, bits: Int
+        in model: Module, shards: SafetensorsShardSet, budgetBytes: Int, groupSize: Int, bits: Int
     ) -> Int {
-        var installed = 0
+        var blocks: [(block: E0Qwen35SparseMoeBlock, names: ExpertTensorNames)] = []
         for (path, module) in model.namedModules() {
             guard let block = module as? E0Qwen35SparseMoeBlock else { continue }
-            let switchPath = "\(path).switch_mlp"
-            guard let names = ExpertTensorNames(modulePath: switchPath, shards: shards) else {
-                continue
-            }
+            guard
+                let names = ExpertTensorNames(
+                    modulePath: "\(path).switch_mlp", shards: shards)
+            else { continue }
+            blocks.append((block, names))
+        }
+        guard let first = blocks.first else { return 0 }
+
+        let perExpert = first.names.bytesPerExpert(shards: shards)
+        // At least two slots so a layer can hold the experts of consecutive
+        // tokens; the ceiling keeps a generous budget from pinning a whole
+        // layer, which would defeat the point of streaming.
+        let slots = min(64, max(2, budgetBytes / max(1, blocks.count * perExpert)))
+
+        for (block, names) in blocks {
             block.switchMLP = Edge0StreamingSwitchGLU(
                 shards: shards,
                 names: names,
                 quantization: ExpertQuantization(groupSize: groupSize, bits: bits),
-                hotSlots: hotSlots
+                hotSlots: slots
             )
-            installed += 1
         }
-        return installed
+        return blocks.count
     }
 }
 

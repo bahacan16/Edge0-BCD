@@ -28,12 +28,14 @@ final class AppSettings {
         didSet { store(expertStreaming, "expertStreaming") }
     }
 
-    /// How many experts each layer keeps in RAM. A decode step touches only K
-    /// of them, but prompt processing walks many more, so a larger cache is
-    /// what keeps prefill from re-reading the same experts over and over.
-    /// Roughly 1.5 MB per expert per layer on the 35B tier.
-    var hotExpertSlots: Int {
-        didSet { store(hotExpertSlots, "hotExpertSlots") }
+    /// Total RAM the streamed experts may cache, across every MoE layer.
+    ///
+    /// A decode step touches only K experts per layer, but prompt processing
+    /// walks many more, so a cache is what keeps prefill from re-reading the
+    /// same weights over and over. The loader turns this into a per-layer slot
+    /// count from the checkpoint's real expert size.
+    var expertCacheBudgetMB: Int {
+        didSet { store(expertCacheBudgetMB, "expertCacheBudgetMB") }
     }
 
     // MARK: Sampling
@@ -89,7 +91,9 @@ final class AppSettings {
         useLoRA = d.object(forKey: Self.key("useLoRA")) as? Bool ?? true
         expertStreaming =
             d.object(forKey: Self.key("expertStreaming")) as? Bool ?? tier.requiresExpertStreaming
-        hotExpertSlots = d.object(forKey: Self.key("hotExpertSlots")) as? Int ?? 16
+        expertCacheBudgetMB =
+            d.object(forKey: Self.key("expertCacheBudgetMB")) as? Int
+            ?? Self.defaultExpertCacheBudgetMB
 
         temperature = d.object(forKey: Self.key("temperature")) as? Double
             ?? Double(defaults.temperature)
@@ -107,6 +111,13 @@ final class AppSettings {
     }
 
     static let defaultSystemPrompt = "Yardımcı, kısa ve net yanıt veren bir asistansın."
+
+    /// A sixteenth of the device's RAM, clamped to something sane. Phones with
+    /// less memory get a smaller cache without the user having to know why.
+    static var defaultExpertCacheBudgetMB: Int {
+        let physical = ProcessInfo.processInfo.physicalMemory / (1024 * 1024)
+        return max(128, min(1024, Int(physical) / 16))
+    }
 
     /// Resets sampling to the selected tier's shipped defaults.
     func resetSamplingToTierDefaults() {

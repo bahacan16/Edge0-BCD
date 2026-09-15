@@ -173,7 +173,7 @@ enum Edge0Loader {
         tier: Edge0Tier,
         applyLoRA: Bool,
         gpuCacheLimitMB: Int,
-        hotExpertSlots: Int,
+        expertCacheBudgetMB: Int,
         streamExperts: Bool,
         onProgress: @escaping @Sendable (Progress) -> Void
     ) async throws -> Edge0LoadedModel {
@@ -200,7 +200,7 @@ enum Edge0Loader {
                 tier: tier,
                 directory: resolved.modelDirectory,
                 tokenizerLoader: #huggingFaceTokenizerLoader(),
-                hotSlotsPerLayer: hotExpertSlots,
+                expertCacheBudgetBytes: expertCacheBudgetMB * 1024 * 1024,
                 loraURL: applyLoRA ? loraURL : nil
             )
             container = ModelContainer(context: loaded.context)

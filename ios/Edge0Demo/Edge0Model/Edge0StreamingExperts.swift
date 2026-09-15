@@ -71,6 +71,28 @@ struct ExpertTensorNames {
     }
 }
 
+extension ExpertTensorNames {
+    /// Bytes one expert occupies across all three projections. Used to turn
+    /// the user's cache budget into a slot count — the number that actually
+    /// matters is megabytes, and a 35B expert is not the same size as an 8B
+    /// one.
+    func bytesPerExpert(shards: SafetensorsShardSet) -> Int {
+        let tensors = [
+            gateWeight, gateScales, gateBiases, upWeight, upScales, upBiases,
+            downWeight, downScales, downBiases,
+        ].compactMap { $0 }
+
+        var total = 0
+        for tensor in tensors {
+            guard let shard = shards.shard(for: tensor), let entry = shard.entries[tensor],
+                let experts = entry.shape.first, experts > 0
+            else { continue }
+            total += entry.byteCount / experts
+        }
+        return max(total, 1)
+    }
+}
+
 /// One expert's slice of all three projections, materialized in memory.
 private struct ExpertSlice {
     let gateWeight: MLXArray
@@ -92,9 +114,24 @@ final class ExpertSlotPool {
 
     private var cache: [Int32: ExpertSlice] = [:]
     private var recency: [Int32] = []
+    /// Generation runs off the main thread, but a memory warning arrives on it,
+    /// so the cache is touched from two threads and needs a lock.
+    private let lock = NSLock()
 
-    private(set) var hits = 0
-    private(set) var misses = 0
+    private var _hits = 0
+    private var _misses = 0
+
+    var hits: Int { lock.withLock { _hits } }
+    var misses: Int { lock.withLock { _misses } }
+
+    /// Drops every cached expert. The next step pages them back in from the
+    /// mapping, which is slow but always correct.
+    func purge() {
+        lock.withLock {
+            cache.removeAll()
+            recency.removeAll()
+        }
+    }
 
     init(shards: SafetensorsShardSet, names: ExpertTensorNames, capacity: Int) {
         self.shards = shards
@@ -127,12 +164,15 @@ final class ExpertSlotPool {
     }
 
     fileprivate func slice(for expert: Int32) throws -> ExpertSlice {
-        if let cached = cache[expert] {
-            hits += 1
+        if let cached = lock.withLock({ () -> ExpertSlice? in
+            guard let cached = cache[expert] else { return nil }
+            _hits += 1
             touch(expert)
             return cached
+        }) {
+            return cached
         }
-        misses += 1
+        lock.withLock { _misses += 1 }
 
         let slice = ExpertSlice(
             gateWeight: try read(names.gateWeight, expert: expert),
@@ -150,12 +190,15 @@ final class ExpertSlotPool {
             slice.gateWeight, slice.gateScales, slice.upWeight, slice.upScales,
             slice.downWeight, slice.downScales)
 
-        cache[expert] = slice
-        touch(expert)
-        evictIfNeeded()
+        lock.withLock {
+            cache[expert] = slice
+            touch(expert)
+            evictIfNeeded()
+        }
         return slice
     }
 
+    /// Both callers hold `lock`.
     private func touch(_ expert: Int32) {
         recency.removeAll { $0 == expert }
         recency.append(expert)
@@ -182,6 +225,49 @@ private struct StackedSlots {
     let downBiases: MLXArray?
 }
 
+/// Every streaming layer built so far, weakly held.
+///
+/// When iOS warns about memory the app has seconds to give some back, and the
+/// expert caches are the largest thing it can drop without losing the model.
+/// Walking the module tree to find them would mean touching the model from the
+/// main thread while it is generating, so they register here instead.
+enum Edge0ExpertCaches {
+    private final class WeakLayer {
+        weak var layer: Edge0StreamingSwitchGLU?
+        init(_ layer: Edge0StreamingSwitchGLU) { self.layer = layer }
+    }
+
+    private static var layers: [WeakLayer] = []
+    private static let lock = NSLock()
+
+    static func register(_ layer: Edge0StreamingSwitchGLU) {
+        lock.withLock {
+            layers.removeAll { $0.layer == nil }
+            layers.append(WeakLayer(layer))
+        }
+    }
+
+    /// Drops every layer's cached experts.
+    static func purge() {
+        let current = lock.withLock { layers.compactMap(\.layer) }
+        for layer in current { layer.purge() }
+    }
+
+    /// Aggregate hit/miss counts across every streaming layer.
+    static var statistics: (hits: Int, misses: Int) {
+        let current = lock.withLock { layers.compactMap(\.layer) }
+        return current.reduce(into: (hits: 0, misses: 0)) { total, layer in
+            let layerStatistics = layer.cacheStatistics
+            total.hits += layerStatistics.hits
+            total.misses += layerStatistics.misses
+        }
+    }
+
+    static var layerCount: Int {
+        lock.withLock { layers.compactMap(\.layer).count }
+    }
+}
+
 /// A `SwitchGLU` whose expert weights live on disk.
 ///
 /// The superclass is initialized with 1×1×1 placeholder projections so it never
@@ -204,6 +290,13 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
         self.quantization = quantization
         self.activationFunction = MLXNN.silu
         super.init(inputDims: 1, hiddenDims: 1, numExperts: 1, bias: false)
+        Edge0ExpertCaches.register(self)
+    }
+
+    /// Releases the cached experts. Called on a memory warning.
+    func purge() {
+        lastSlots = nil
+        pool.purge()
     }
 
     /// Above this many distinct experts in one call, the token dimension is
