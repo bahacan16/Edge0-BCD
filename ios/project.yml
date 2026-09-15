@@ -25,8 +25,12 @@ settings:
 
 packages:
   MLXSwift:
+    # NOTE: mlx-swift >= 0.31.5 declares swift-tools-version 6.3, which the
+    # runner's Xcode 26.3 SwiftPM refuses. A range lets SPM fall back to the
+    # newest tools-compatible release (0.31.4) instead of failing outright.
     url: https://github.com/ml-explore/mlx-swift
-    from: 0.31.6
+    minVersion: 0.31.0
+    maxVersion: 0.32.0
   MLXSwiftLM:
     url: https://github.com/ml-explore/mlx-swift-lm
     from: 3.31.3

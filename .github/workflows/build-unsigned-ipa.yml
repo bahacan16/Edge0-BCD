@@ -31,12 +31,25 @@ jobs:
         working-directory: ios
         run: xcodegen generate
 
+      # MLX's C++/Metal sources take ~12 minutes to compile from scratch, which
+      # dominates every run. Restoring DerivedData lets xcodebuild reuse those
+      # object files and only rebuild the app's own Swift sources.
+      - name: Restore build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ios/build
+          key: edge0-derived-${{ hashFiles('ios/project.yml') }}-${{ github.sha }}
+          restore-keys: |
+            edge0-derived-${{ hashFiles('ios/project.yml') }}-
+            edge0-derived-
+
       - name: Resolve Swift package dependencies
         working-directory: ios
         run: |
           xcodebuild -resolvePackageDependencies \
             -project Edge0Demo.xcodeproj \
-            -scheme Edge0Demo
+            -scheme Edge0Demo \
+            -derivedDataPath build
 
       - name: Build unsigned .app for iOS device
         working-directory: ios
@@ -53,6 +66,15 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM=""
+
+      # Saved even on failure: a failed Swift compile still leaves MLX's object
+      # files behind, which is exactly what the next iteration wants to reuse.
+      - name: Save build cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ios/build
+          key: edge0-derived-${{ hashFiles('ios/project.yml') }}-${{ github.sha }}
 
       - name: Package unsigned IPA
         working-directory: ios
