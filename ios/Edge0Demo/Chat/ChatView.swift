@@ -280,7 +280,15 @@ private struct TierPill: View {
 
 private struct ModelStatusBanner: View {
     @Environment(ModelManager.self) private var models
+    @Environment(AppSettings.self) private var settings
     @Binding var selectedTab: RootTab
+
+    /// The tier the user would get by tapping the button, if it is already on
+    /// disk — then loading needs no trip to the models tab.
+    private var readyToLoad: Edge0Tier? {
+        let tier = models.activeTier ?? settings.selectedTier
+        return models.downloadedTiers.contains(tier) ? tier : nil
+    }
 
     var body: some View {
         SurfaceCard(padding: 14) {
@@ -301,10 +309,16 @@ private struct ModelStatusBanner: View {
                         .monospacedDigit()
                         .foregroundStyle(Theme.cyan)
                 } else if !models.phase.isBusy {
-                    Button("Aç") { selectedTab = .models }
-                        .font(.system(size: 13, weight: .semibold))
-                        .buttonStyle(.borderedProminent)
-                        .tint(Theme.blue)
+                    Button(readyToLoad == nil ? "Aç" : "Yükle") {
+                        if let tier = readyToLoad {
+                            models.prepare(tier: tier, settings: settings)
+                        } else {
+                            selectedTab = .models
+                        }
+                    }
+                    .font(.system(size: 13, weight: .semibold))
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.blue)
                 }
             }
         }
@@ -340,7 +354,9 @@ private struct ModelStatusBanner: View {
         case .downloading(_, let detail): detail
         case .preparing(let detail): detail
         case .failed(let message): message
-        default: "Sohbete başlamak için Modeller sekmesinden bir tier seçin."
+        default:
+            readyToLoad.map { "\($0.displayName) indirilmiş — yüklemek için dokun." }
+                ?? "Sohbete başlamak için Modeller sekmesinden bir tier seçin."
         }
     }
 }
