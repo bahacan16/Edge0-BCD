@@ -306,15 +306,15 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
     private static let maxExpertsPerCall = 32
 
     override func callAsFunction(_ x: MLXArray, _ indices: MLXArray) -> MLXArray {
+        // Reading the router's choice costs a GPU→CPU sync, and this runs once
+        // per MoE layer per step, so it is read once and passed down rather
+        // than fetched again inside `project`.
+        let requested = indices.asArray(Int32.self)
         let tokenCount = indices.dim(-2)
-        if tokenCount > 1, distinctExpertCount(indices) > Self.maxExpertsPerCall {
+        if tokenCount > 1, Set(requested).count > Self.maxExpertsPerCall {
             return splitOverTokens(x, indices)
         }
-        return project(x, indices)
-    }
-
-    private func distinctExpertCount(_ indices: MLXArray) -> Int {
-        Set(indices.asArray(Int32.self)).count
+        return project(x, indices, requested: requested)
     }
 
     /// Halves the sequence until each piece touches few enough experts.
@@ -329,13 +329,10 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
         return MLX.concatenated([first, second], axis: tokenAxis)
     }
 
-    private func project(_ x: MLXArray, _ indices: MLXArray) -> MLXArray {
-        let requested = indices.asArray(Int32.self)
+    private func project(_ x: MLXArray, _ indices: MLXArray, requested: [Int32]) -> MLXArray {
         let unique = Array(Set(requested)).sorted()
         var slotOf: [Int32: Int32] = [:]
         for (slot, expert) in unique.enumerated() { slotOf[expert] = Int32(slot) }
-
-        for expert in unique { pool.prefetch(expert: expert) }
 
         let slots: StackedSlots
         do {
@@ -372,6 +369,10 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
         if let cached = lastSlots, cached.key == experts {
             return cached.slots
         }
+        // Only worth hinting the kernel once the memo has actually missed:
+        // consecutive tokens usually route to the same set, and paging in
+        // weights that are already resident is pure work.
+        for expert in experts { pool.prefetch(expert: expert) }
         var slices: [ExpertSlice] = []
         slices.reserveCapacity(experts.count)
         for expert in experts {
