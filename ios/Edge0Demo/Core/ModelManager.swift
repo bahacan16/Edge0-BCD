@@ -35,6 +35,9 @@ final class ModelManager {
     private(set) var freeDiskSpace: Int64 = 0
 
     private var loadTask: Task<Void, Never>?
+    /// Stamps each load so a superseded one cannot report progress, publish a
+    /// result, or clear its successor's task handle.
+    private var loadGeneration = 0
     /// Last progress sample and a smoothed rate, for the download ETA.
     private var lastProgressSample: (at: Date, bytes: Int64)?
     private var smoothedBytesPerSecond: Double = 0
@@ -119,10 +122,18 @@ final class ModelManager {
         // A multi-GB download dies if the screen locks and the app suspends.
         UIApplication.shared.isIdleTimerDisabled = true
 
+        // A cancelled load finishes asynchronously, so by the time its tail
+        // runs a newer one may already be in flight. Without this stamp the
+        // old task clears the new task's handle on its way out, and the guard
+        // at the top of this method then lets a second load start alongside
+        // it — two checkpoints resident at once, on a phone.
+        loadGeneration += 1
+        let generation = loadGeneration
+
         loadTask = Task { [weak self] in
             defer {
                 UIApplication.shared.isIdleTimerDisabled = false
-                self?.loadTask = nil
+                if self?.loadGeneration == generation { self?.loadTask = nil }
             }
             do {
                 let result = try await Edge0Loader.load(
@@ -133,25 +144,34 @@ final class ModelManager {
                     streamExperts: settings.expertStreaming,
                     onProgress: { progress in
                         Task { @MainActor [weak self] in
+                            guard self?.loadGeneration == generation else { return }
                             self?.report(progress)
                         }
                     }
                 )
-                guard let self, !Task.isCancelled else { return }
+                guard let self, !Task.isCancelled, self.loadGeneration == generation else {
+                    return
+                }
                 self.loaded = result
                 self.activeTier = tier
                 self.pendingTier = nil
                 self.phase = .ready
                 self.refreshStorage()
             } catch is CancellationError {
+                guard self?.loadGeneration == generation else { return }
                 self?.phase = .idle
             } catch {
+                guard self?.loadGeneration == generation else { return }
                 self?.phase = .failed(error.localizedDescription)
             }
         }
     }
 
     func cancelLoad() {
+        // Bumping the stamp is what makes this stick: cancellation is
+        // cooperative, so the task may still be mid-load and would otherwise
+        // publish its result over the state the user just asked for.
+        loadGeneration += 1
         loadTask?.cancel()
         loadTask = nil
         pendingTier = nil
@@ -159,6 +179,7 @@ final class ModelManager {
     }
 
     func unload() {
+        loadGeneration += 1
         loadTask?.cancel()
         loadTask = nil
         loaded = nil
