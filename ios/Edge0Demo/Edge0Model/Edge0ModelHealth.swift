@@ -73,7 +73,7 @@ enum Edge0ModelHealth {
             }
         }
 
-        let sample = tokenizer.decode(tokens: generated)
+        let sample = tokenizer.decode(tokenIds: generated)
         let distinct = Set(generated).count
 
         if distinct <= 1 {

@@ -95,10 +95,21 @@ public struct Edge0BailingConfiguration: Codable, Sendable {
         case normTopkProb = "norm_topk_prob"
         case routedScalingFactor = "routed_scaling_factor"
         case moeRouterEnableExpertBias = "moe_router_enable_expert_bias"
+        case ropeScaling = "rope_scaling"
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+
+        // This backbone hand-rolls plain interleaved RoPE, exactly as the
+        // reference does, and the reference refuses rope_scaling rather than
+        // pretending to honour it. Doing the same here keeps a future
+        // checkpoint from loading and then being quietly wrong at long
+        // context, which is not a failure anyone would trace back to this.
+        if c.contains(.ropeScaling), (try? c.decodeNil(forKey: .ropeScaling)) == false {
+            throw Edge0ConfigurationError.unsupportedRopeScaling
+        }
+
         func get<T: Decodable>(_ key: CodingKeys, _ def: T) -> T {
             (try? c.decodeIfPresent(T.self, forKey: key)) ?? def
         }
@@ -136,5 +147,16 @@ public struct Edge0BailingConfiguration: Codable, Sendable {
         normTopkProb = get(.normTopkProb, true)
         routedScalingFactor = get(.routedScalingFactor, 2.5)
         moeRouterEnableExpertBias = get(.moeRouterEnableExpertBias, true)
+    }
+}
+
+enum Edge0ConfigurationError: LocalizedError {
+    case unsupportedRopeScaling
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedRopeScaling:
+            "Bu kontrol noktası rope_scaling kullanıyor; 8B omurga portu bunu desteklemiyor."
+        }
     }
 }
