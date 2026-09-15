@@ -54,6 +54,8 @@ struct SettingsView: View {
                     value: formatCount(loaded.parameterCount)
                 )
                 .font(.caption)
+                LabeledContent("Sağlık kontrolü", value: loaded.health.detail)
+                    .font(.caption)
             }
         } header: {
             Text("Model")

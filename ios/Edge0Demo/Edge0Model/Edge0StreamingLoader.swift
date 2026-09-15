@@ -144,7 +144,7 @@ enum Edge0StreamingLoader {
 
 /// Mirrors mlx-swift-lm's own (private) `LLMUserInputProcessor`.
 struct Edge0UserInputProcessor: UserInputProcessor {
-    let tokenizer: any Tokenizers.Tokenizer
+    let tokenizer: any MLXLMCommon.Tokenizer
     let messageGenerator: any MessageGenerator
 
     func prepare(input: UserInput) throws -> LMInput {
