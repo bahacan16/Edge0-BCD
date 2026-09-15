@@ -4,7 +4,7 @@ import SwiftUI
 struct Edge0DemoApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
         }
     }
 }

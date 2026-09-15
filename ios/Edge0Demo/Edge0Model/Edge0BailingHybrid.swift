@@ -13,6 +13,7 @@
 import Foundation
 import MLX
 import MLXFast
+import MLXLLM
 import MLXLMCommon
 import MLXNN
 
@@ -399,7 +400,7 @@ final class Edge0BailingSparseMoE: Module, UnaryLayer {
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let (inds, weights) = gate.groupSelect(x)
         let routed = experts(x, inds)
-        let out = weightedExpertSum(routed, weights)
+        let out = (routed * weights[.ellipsis, .newAxis]).sum(axis: -2)
         return out + sharedExperts(x)
     }
 }
@@ -508,19 +509,16 @@ public class Edge0BailingModel: Module, LLMModel, KVCacheDimensionProvider {
         return model.wordEmbeddings.asLinear(out)
     }
 
-    public func newCache(parameters: GenerateParameters?) throws -> [KVCache] {
-        try model.layers.map { layer in
-            if layer.isMLA {
-                return try makeAttentionKVCache(parameters: parameters)
-            }
-            return ArraysCache(size: 4)
+    /// KDA layers keep four rolling state arrays (q/k/v short-conv states plus
+    /// the delta-rule recurrent state); MLA layers use a normal KV cache.
+    public func newCache(parameters: GenerateParameters?) -> [KVCache] {
+        model.layers.map { layer in
+            layer.isMLA ? KVCacheSimple() : ArraysCache(size: 4)
         }
     }
 
     public func makeCache() -> [KVCache] {
-        model.layers.map { layer in
-            layer.isMLA ? KVCacheSimple() : ArraysCache(size: 4)
-        }
+        newCache(parameters: nil)
     }
 
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
