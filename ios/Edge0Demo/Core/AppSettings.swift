@@ -112,11 +112,13 @@ final class AppSettings {
 
     static let defaultSystemPrompt = "Yardımcı, kısa ve net yanıt veren bir asistansın."
 
-    /// A sixteenth of the device's RAM, clamped to something sane. Phones with
-    /// less memory get a smaller cache without the user having to know why.
+    /// A share of what iOS will actually let this process allocate, rather
+    /// than of the device's RAM — an app gets only a fraction of the latter,
+    /// so sizing against it is how a cache ends up getting the app killed.
     static var defaultExpertCacheBudgetMB: Int {
-        let physical = ProcessInfo.processInfo.physicalMemory / (1024 * 1024)
-        return max(128, min(1024, Int(physical) / 16))
+        let available = Int(ModelManager.availableProcessMemoryBytes) / (1024 * 1024)
+        guard available > 0 else { return 256 }
+        return max(128, min(1024, available / 8))
     }
 
     /// Resets sampling to the selected tier's shipped defaults.

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import MLX
 import MLXLMCommon
@@ -83,6 +84,15 @@ final class ModelManager {
         if activeTier == tier { unload() }
         try? Edge0Storage.delete(tier)
         refreshStorage()
+    }
+
+    /// True when the tier's expected peak fits inside what iOS will let this
+    /// process allocate. False is a warning, not a block: the budget moves
+    /// around, and the expert cache can be turned down to make room.
+    func hasMemoryHeadroom(for tier: Edge0Tier) -> Bool {
+        let available = Self.availableProcessMemoryBytes
+        guard available > 0 else { return true }
+        return Double(available) > tier.peakActiveMemoryGB * 1_073_741_824
     }
 
     /// True when the tier's checkpoint plausibly fits the device's free space.
@@ -203,6 +213,12 @@ final class ModelManager {
     // MARK: Memory
 
     static var physicalMemoryBytes: Int64 { Int64(ProcessInfo.processInfo.physicalMemory) }
+
+    /// What iOS will actually let *this process* allocate before jetsam kills
+    /// it. This is the number that decides whether a tier fits, not the
+    /// device's RAM: an app gets a fraction of the latter, and how big a
+    /// fraction depends on entitlements and on what else the phone is doing.
+    static var availableProcessMemoryBytes: Int64 { Int64(os_proc_available_memory()) }
 
     static var mlxActiveMemoryBytes: Int64 { Int64(MLX.GPU.activeMemory) }
 

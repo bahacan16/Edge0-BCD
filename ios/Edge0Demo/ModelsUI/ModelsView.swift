@@ -179,6 +179,18 @@ private struct TierCard: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(Theme.danger)
             }
+            if !models.hasMemoryHeadroom(for: tier) {
+                // A warning, not a block: the budget moves around, and the
+                // expert cache can be turned down to make room.
+                Label(
+                    """
+                    Bellek dar görünüyor (uygulamaya kalan                     \(ModelManager.formatBytes(ModelManager.availableProcessMemoryBytes))).                     Ayarlar'dan expert önbelleğini düşürmek gerekebilir.
+                    """,
+                    systemImage: "memorychip"
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.amber)
+            }
         }
     }
 

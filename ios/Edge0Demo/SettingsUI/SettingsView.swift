@@ -145,6 +145,11 @@ struct SettingsView: View {
                 Text(ModelManager.formatBytes(ModelManager.physicalMemoryBytes))
                     .monospacedDigit()
             }
+            LabeledContent("Uygulamaya kalan") {
+                Text(ModelManager.formatBytes(ModelManager.availableProcessMemoryBytes))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.mint)
+            }
             if Edge0ExpertCaches.layerCount > 0 {
                 let statistics = Edge0ExpertCaches.statistics
                 LabeledContent("Expert önbellek isabeti") {
