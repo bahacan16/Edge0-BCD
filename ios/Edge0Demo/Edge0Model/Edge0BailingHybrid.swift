@@ -333,7 +333,11 @@ final class Edge0BailingGate: Module {
     let normTopkProb: Bool
 
     @ParameterInfo(key: "weight") var weight: MLXArray
-    @ParameterInfo(key: "expert_bias") var expertBias: MLXArray
+    // Optional because upstream only creates it when the config asks for it,
+    // and a parameter this model declares but the checkpoint does not ship
+    // fails the whole load: mlx-swift-lm applies weights with
+    // `verify: [.all]`, which requires every declared parameter to be set.
+    @ParameterInfo(key: "expert_bias") var expertBias: MLXArray?
 
     init(_ args: Edge0BailingConfiguration) {
         topK = args.numExpertsPerTok
@@ -343,7 +347,8 @@ final class Edge0BailingGate: Module {
         routedScalingFactor = args.routedScalingFactor
         normTopkProb = args.normTopkProb
         _weight.wrappedValue = MLXArray.zeros([args.numExperts, args.hiddenSize])
-        _expertBias.wrappedValue = MLXArray.zeros([args.numExperts])
+        _expertBias.wrappedValue =
+            args.moeRouterEnableExpertBias ? MLXArray.zeros([args.numExperts]) : nil
         super.init()
     }
 
@@ -356,7 +361,7 @@ final class Edge0BailingGate: Module {
         let seqLen = x.dim(1)
         let logits = matmul(x, weight.T)
         let scores = sigmoid(logits.asType(.float32))
-        let selectBase = scores + expertBias
+        let selectBase = expertBias.map { scores + $0 } ?? scores
 
         var select = selectBase
         let kDrop = nGroup - topkGroup
