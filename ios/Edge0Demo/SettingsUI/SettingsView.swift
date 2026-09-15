@@ -66,6 +66,16 @@ struct SettingsView: View {
                 .font(.caption)
                 LabeledContent("Sağlık kontrolü", value: loaded.health.detail)
                     .font(.caption)
+                if !loaded.health.sample.isEmpty {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Açılış örneği")
+                            .font(.caption)
+                        Text(loaded.health.sample)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                    }
+                }
             }
         } header: {
             Text("Model")
