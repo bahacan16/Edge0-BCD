@@ -34,7 +34,9 @@ final class ModelManager {
     private(set) var freeDiskSpace: Int64 = 0
 
     private var loadTask: Task<Void, Never>?
-    private var memoryWarningObserver: (any NSObjectProtocol)?
+    /// `deinit` is nonisolated, so the token it has to release cannot be
+    /// main-actor state. Only `init` and `deinit` touch it.
+    nonisolated(unsafe) private var memoryWarningObserver: (any NSObjectProtocol)?
 
     init() {
         refreshStorage()
