@@ -172,6 +172,8 @@ enum Edge0Loader {
         tier: Edge0Tier,
         applyLoRA: Bool,
         gpuCacheLimitMB: Int,
+        hotExpertSlots: Int,
+        streamExperts: Bool,
         onProgress: @escaping @Sendable (Progress) -> Void
     ) async throws -> Edge0LoadedModel {
         await registerModelTypes()
@@ -186,16 +188,32 @@ enum Edge0Loader {
             configuration: configuration, from: Edge0Downloader(), useLatest: false,
             progressHandler: onProgress)
 
-        let container = try await LLMModelFactory.shared.loadContainer(
-            from: resolved.modelDirectory,
-            using: #huggingFaceTokenizerLoader())
-
-        var report: Edge0LoRAReport?
         let loraURL = resolved.modelDirectory.appendingPathComponent(tier.loraFileName)
-        if applyLoRA, FileManager.default.fileExists(atPath: loraURL.path) {
-            report = try await container.perform { context in
-                try Edge0LoRA.apply(
-                    to: context.model, fileURL: loraURL, rank: 16, alpha: 32.0)
+        let container: ModelContainer
+        var report: Edge0LoRAReport?
+
+        if streamExperts || tier.requiresExpertStreaming {
+            // The 35B checkpoint is far larger than any phone's memory, so its
+            // experts stay on disk and are read per step.
+            let loaded = try await Edge0StreamingLoader.load(
+                tier: tier,
+                directory: resolved.modelDirectory,
+                tokenizerLoader: #huggingFaceTokenizerLoader(),
+                hotSlotsPerLayer: hotExpertSlots,
+                loraURL: applyLoRA ? loraURL : nil
+            )
+            container = ModelContainer(context: loaded.context)
+            report = loaded.loraReport
+        } else {
+            container = try await LLMModelFactory.shared.loadContainer(
+                from: resolved.modelDirectory,
+                using: #huggingFaceTokenizerLoader())
+
+            if applyLoRA, FileManager.default.fileExists(atPath: loraURL.path) {
+                report = try await container.perform { context in
+                    try Edge0LoRA.apply(
+                        to: context.model, fileURL: loraURL, rank: 16, alpha: 32.0)
+                }
             }
         }
 

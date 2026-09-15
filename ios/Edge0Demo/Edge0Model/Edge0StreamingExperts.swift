@@ -1,0 +1,285 @@
+// Streaming MoE experts — the mechanism that lets a 23 GB checkpoint run on a
+// phone. Port of the idea behind edge0/src/edge0/streaming (Edge0-AI/edge0,
+// Apache-2.0), rebuilt on MLX Swift's own gather-quantized matmul.
+//
+// A resident MoE layer keeps every expert's weights in memory: for the 35B tier
+// that is ~384 MB per layer, ~15 GB across 40 layers. But one token only routes
+// to K experts (4 here), so the working set per step is ~6 MB per layer. This
+// module keeps the stacked `[num_experts, out, in]` tensors mapped on disk,
+// copies just the selected experts into a small slot buffer, and runs the same
+// `gatherQuantizedMM` the resident path would — bit-identical math, a fraction
+// of the memory.
+//
+// Recently used experts are kept in a small per-layer cache, because routing is
+// strongly correlated between consecutive tokens.
+
+import Foundation
+import MLX
+import MLXLMCommon
+import MLXNN
+
+/// Quantization layout of one stacked expert tensor set.
+struct ExpertQuantization {
+    var groupSize: Int
+    var bits: Int
+}
+
+/// Names of the three stacked projections for one MoE layer, as they appear in
+/// the checkpoint.
+struct ExpertTensorNames {
+    let gateWeight: String
+    let gateScales: String
+    let gateBiases: String?
+    let upWeight: String
+    let upScales: String
+    let upBiases: String?
+    let downWeight: String
+    let downScales: String
+    let downBiases: String?
+
+    /// Resolves `<modulePath>.{gate,up,down}_proj.{weight,scales,biases}` in the
+    /// shard set, tolerating a checkpoint prefix that differs from the module
+    /// path (edge0's 35B keys start with `language_model.`).
+    init?(modulePath: String, shards: SafetensorsShardSet) {
+        func resolve(_ projection: String, _ part: String) -> String? {
+            let suffix = "\(projection).\(part)"
+            let exact = "\(modulePath).\(suffix)"
+            if shards.entry(for: exact) != nil { return exact }
+            // Fall back to a suffix match that still pins the layer index.
+            guard let key = LayerScopedName(path: modulePath) else { return nil }
+            let tail = "layers.\(key.layerIndex).\(key.relativePath).\(suffix)"
+            return shards.tensorNames.first { $0.hasSuffix(tail) }
+        }
+
+        guard let gateWeight = resolve("gate_proj", "weight"),
+            let gateScales = resolve("gate_proj", "scales"),
+            let upWeight = resolve("up_proj", "weight"),
+            let upScales = resolve("up_proj", "scales"),
+            let downWeight = resolve("down_proj", "weight"),
+            let downScales = resolve("down_proj", "scales")
+        else { return nil }
+
+        self.gateWeight = gateWeight
+        self.gateScales = gateScales
+        self.gateBiases = resolve("gate_proj", "biases")
+        self.upWeight = upWeight
+        self.upScales = upScales
+        self.upBiases = resolve("up_proj", "biases")
+        self.downWeight = downWeight
+        self.downScales = downScales
+        self.downBiases = resolve("down_proj", "biases")
+    }
+}
+
+/// One expert's slice of all three projections, materialized in memory.
+private struct ExpertSlice {
+    let gateWeight: MLXArray
+    let gateScales: MLXArray
+    let gateBiases: MLXArray?
+    let upWeight: MLXArray
+    let upScales: MLXArray
+    let upBiases: MLXArray?
+    let downWeight: MLXArray
+    let downScales: MLXArray
+    let downBiases: MLXArray?
+}
+
+/// Reads expert slices out of mapped shards, keeping the most recent ones.
+final class ExpertSlotPool {
+    private let shards: SafetensorsShardSet
+    private let names: ExpertTensorNames
+    private let capacity: Int
+
+    private var cache: [Int32: ExpertSlice] = [:]
+    private var recency: [Int32] = []
+
+    private(set) var hits = 0
+    private(set) var misses = 0
+
+    init(shards: SafetensorsShardSet, names: ExpertTensorNames, capacity: Int) {
+        self.shards = shards
+        self.names = names
+        self.capacity = max(1, capacity)
+    }
+
+    private func read(_ tensor: String, expert: Int32) throws -> MLXArray {
+        guard let shard = shards.shard(for: tensor),
+            let entry = shard.entries[tensor],
+            let dtype = SafetensorsMmap.dtype(from: entry.dtype)
+        else { throw SafetensorsError.unknownTensor(tensor) }
+        return try shard.slice(tensor: tensor, rowIndex: Int(expert), as: dtype)
+    }
+
+    private func readOptional(_ tensor: String?, expert: Int32) -> MLXArray? {
+        guard let tensor else { return nil }
+        return try? read(tensor, expert: expert)
+    }
+
+    /// Hints the kernel to page in every byte range this expert needs.
+    func prefetch(expert: Int32) {
+        for tensor in [names.gateWeight, names.upWeight, names.downWeight] {
+            guard let shard = shards.shard(for: tensor), let entry = shard.entries[tensor],
+                let leading = entry.shape.first, leading > 0
+            else { continue }
+            let rowBytes = entry.byteCount / leading
+            shard.prefetch(offset: entry.offset + Int(expert) * rowBytes, byteCount: rowBytes)
+        }
+    }
+
+    fileprivate func slice(for expert: Int32) throws -> ExpertSlice {
+        if let cached = cache[expert] {
+            hits += 1
+            touch(expert)
+            return cached
+        }
+        misses += 1
+
+        let slice = ExpertSlice(
+            gateWeight: try read(names.gateWeight, expert: expert),
+            gateScales: try read(names.gateScales, expert: expert),
+            gateBiases: readOptional(names.gateBiases, expert: expert),
+            upWeight: try read(names.upWeight, expert: expert),
+            upScales: try read(names.upScales, expert: expert),
+            upBiases: readOptional(names.upBiases, expert: expert),
+            downWeight: try read(names.downWeight, expert: expert),
+            downScales: try read(names.downScales, expert: expert),
+            downBiases: readOptional(names.downBiases, expert: expert)
+        )
+        // Materialize now so the mapped pages can go cold again.
+        eval(
+            slice.gateWeight, slice.gateScales, slice.upWeight, slice.upScales,
+            slice.downWeight, slice.downScales)
+
+        cache[expert] = slice
+        touch(expert)
+        evictIfNeeded()
+        return slice
+    }
+
+    private func touch(_ expert: Int32) {
+        recency.removeAll { $0 == expert }
+        recency.append(expert)
+    }
+
+    private func evictIfNeeded() {
+        while recency.count > capacity {
+            let victim = recency.removeFirst()
+            cache[victim] = nil
+        }
+    }
+}
+
+/// A `SwitchGLU` whose expert weights live on disk.
+///
+/// The superclass is initialized with 1×1×1 placeholder projections so it never
+/// allocates the full expert tensors; every forward pass goes through the
+/// override below, which never touches them.
+final class Edge0StreamingSwitchGLU: E0SwitchGLU {
+    private let pool: ExpertSlotPool
+    private let quantization: ExpertQuantization
+    private let activationFunction: (MLXArray) -> MLXArray
+
+    init(
+        shards: SafetensorsShardSet,
+        names: ExpertTensorNames,
+        quantization: ExpertQuantization,
+        hotSlots: Int
+    ) {
+        self.pool = ExpertSlotPool(
+            shards: shards, names: names, capacity: hotSlots)
+        self.quantization = quantization
+        self.activationFunction = MLXNN.silu
+        super.init(inputDims: 1, hiddenDims: 1, numExperts: 1, bias: false)
+    }
+
+    override func callAsFunction(_ x: MLXArray, _ indices: MLXArray) -> MLXArray {
+        let requested = indices.asArray(Int32.self)
+        let unique = Array(Set(requested)).sorted()
+        var slotOf: [Int32: Int32] = [:]
+        for (slot, expert) in unique.enumerated() { slotOf[expert] = Int32(slot) }
+
+        for expert in unique { pool.prefetch(expert: expert) }
+
+        var slices: [ExpertSlice] = []
+        slices.reserveCapacity(unique.count)
+        do {
+            for expert in unique {
+                slices.append(try pool.slice(for: expert))
+            }
+        } catch {
+            // Losing an expert would silently corrupt the answer, so fail loudly
+            // rather than routing through zeros.
+            fatalError("edge0 streaming experts: \(error)")
+        }
+
+        let slotIndices = MLXArray(
+            requested.map { slotOf[$0] ?? 0 }, indices.shape)
+
+        var h = MLX.expandedDimensions(x, axes: [-2, -3])
+
+        let gate = gather(
+            h, weight: MLX.stacked(slices.map(\.gateWeight)),
+            scales: MLX.stacked(slices.map(\.gateScales)),
+            biases: stackedOptional(slices.map(\.gateBiases)),
+            indices: slotIndices)
+        let up = gather(
+            h, weight: MLX.stacked(slices.map(\.upWeight)),
+            scales: MLX.stacked(slices.map(\.upScales)),
+            biases: stackedOptional(slices.map(\.upBiases)),
+            indices: slotIndices)
+
+        h = gather(
+            activationFunction(gate) * up,
+            weight: MLX.stacked(slices.map(\.downWeight)),
+            scales: MLX.stacked(slices.map(\.downScales)),
+            biases: stackedOptional(slices.map(\.downBiases)),
+            indices: slotIndices)
+
+        return MLX.squeezed(h, axis: -2)
+    }
+
+    private func gather(
+        _ x: MLXArray, weight: MLXArray, scales: MLXArray, biases: MLXArray?,
+        indices: MLXArray
+    ) -> MLXArray {
+        MLX.gatherQuantizedMM(
+            x, weight, scales: scales, biases: biases,
+            rhsIndices: indices,
+            transpose: true,
+            groupSize: quantization.groupSize,
+            bits: quantization.bits
+        )
+    }
+
+    private func stackedOptional(_ arrays: [MLXArray?]) -> MLXArray? {
+        let present = arrays.compactMap { $0 }
+        guard present.count == arrays.count, !present.isEmpty else { return nil }
+        return MLX.stacked(present)
+    }
+
+    var cacheStatistics: (hits: Int, misses: Int) { (pool.hits, pool.misses) }
+}
+
+/// A module path split at its `layers.<n>.` boundary, used to match checkpoint
+/// tensor names against module paths that carry a different prefix.
+struct LayerScopedName {
+    let layerIndex: Int
+    let relativePath: String
+
+    init?(path: String) {
+        let parts = path.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count >= 3 else { return nil }
+        var cursor = parts.count - 3
+        var match: (index: Int, layer: Int)?
+        while cursor >= 0 {
+            if parts[cursor] == "layers", let layer = Int(parts[cursor + 1]) {
+                match = (cursor, layer)
+                break
+            }
+            cursor -= 1
+        }
+        guard let match else { return nil }
+        layerIndex = match.layer
+        relativePath = parts[(match.index + 2)...].joined(separator: ".")
+    }
+}

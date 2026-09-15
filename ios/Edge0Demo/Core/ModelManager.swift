@@ -88,6 +88,8 @@ final class ModelManager {
                     tier: tier,
                     applyLoRA: settings.useLoRA,
                     gpuCacheLimitMB: settings.gpuCacheLimitMB,
+                    hotExpertSlots: settings.hotExpertSlots,
+                    streamExperts: settings.expertStreaming,
                     onProgress: { progress in
                         Task { @MainActor [weak self] in
                             self?.report(progress)

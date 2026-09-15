@@ -176,6 +176,27 @@ final class SafetensorsMmap {
         }
     }
 
+    /// Copies an entire tensor out of the mapping.
+    func whole(tensor name: String, as dtype: DType) throws -> MLXArray {
+        guard let entry = entries[name] else { throw SafetensorsError.unknownTensor(name) }
+        let buffer = try rawPointer(offset: entry.offset, byteCount: entry.byteCount)
+        switch dtype {
+        case .uint32:
+            return MLXArray(buffer, entry.shape, type: UInt32.self)
+        case .uint8:
+            return MLXArray(buffer, entry.shape, type: UInt8.self)
+        case .float16:
+            return MLXArray(buffer, entry.shape, type: Float16.self)
+        case .bfloat16:
+            let raw = MLXArray(buffer, [entry.byteCount / 2], type: UInt16.self)
+            return raw.view(dtype: .bfloat16).reshaped(entry.shape)
+        case .float32:
+            return MLXArray(buffer, entry.shape, type: Float.self)
+        default:
+            throw SafetensorsError.unknownTensor("\(name) (dtype \(dtype))")
+        }
+    }
+
     static func dtype(from safetensorsName: String) -> DType? {
         switch safetensorsName {
         case "F32": .float32
