@@ -1,10 +1,12 @@
 import Combine
 import SwiftUI
+import UIKit
 
 struct SettingsView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(ModelManager.self) private var models
     @State private var memoryTick = Date()
+    @State private var copiedDiagnostics = false
 
     private let timer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
@@ -202,7 +204,88 @@ struct SettingsView: View {
             Link(
                 "MLX Swift",
                 destination: URL(string: "https://github.com/ml-explore/mlx-swift")!)
+
+            Button {
+                UIPasteboard.general.string = diagnostics
+                copiedDiagnostics = true
+                Task {
+                    try? await Task.sleep(for: .seconds(1.8))
+                    copiedDiagnostics = false
+                }
+            } label: {
+                Label(
+                    copiedDiagnostics ? "Kopyalandı" : "Tanılama bilgisini kopyala",
+                    systemImage: copiedDiagnostics ? "checkmark" : "stethoscope")
+            }
+            .foregroundStyle(copiedDiagnostics ? Theme.mint : Theme.blue)
         }
+    }
+
+    /// Everything worth knowing when the model misbehaves, in one paste.
+    ///
+    /// Bad output from a hand-written port is nearly impossible to diagnose
+    /// from a description of it — what settles it is which tier, whether the
+    /// adapters all matched, what the load-time sample said and how much
+    /// memory there was. Asking someone to read six screens back is how that
+    /// never gets reported.
+    private var diagnostics: String {
+        var lines: [String] = ["Edge0 tanılama"]
+
+        let version =
+            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        lines.append("Uygulama: \(version) (\(build))")
+        lines.append("iOS: \(UIDevice.current.systemVersion)")
+        lines.append("Tier: \(models.activeTier?.displayName ?? "yüklü değil")")
+        lines.append("Faz: \(String(describing: models.phase))")
+
+        if let loaded = models.loaded {
+            lines.append("Parametre: \(formatCount(loaded.parameterCount))")
+            lines.append("Sağlık: \(loaded.health.detail)")
+            lines.append("Sözlük: \(loaded.health.vocabularySize)")
+            if !loaded.health.sample.isEmpty {
+                lines.append("Açılış örneği: \(loaded.health.sample)")
+            }
+            if let report = loaded.loraReport {
+                lines.append(
+                    "LoRA: uygulanan \(report.appliedTargets.count),"
+                        + " eşleşmeyen \(report.unmatchedTargets.count),"
+                        + " ölçek \(report.scale)")
+                // The first few say which layer or projection went astray,
+                // which is the difference between a guess and a fix.
+                for target in report.unmatchedTargets.prefix(5) {
+                    lines.append("  eşleşmeyen: \(target)")
+                }
+            } else {
+                lines.append("LoRA: uygulanmadı")
+            }
+        }
+
+        lines.append("LoRA açık: \(settings.useLoRA)")
+        lines.append("Expert akışı: \(settings.expertStreaming)")
+        lines.append("Expert önbelleği: \(settings.expertCacheBudgetMB) MB")
+        lines.append("MLX önbellek sınırı: \(settings.gpuCacheLimitMB) MB")
+        lines.append(
+            "Üretim: T=\(settings.temperature) topP=\(settings.topP)"
+                + " topK=\(settings.topK) rep=\(settings.repetitionPenalty)"
+                + " maks=\(settings.maxTokens) düşünme=\(settings.thinkingMode)")
+
+        if Edge0ExpertCaches.layerCount > 0 {
+            let statistics = Edge0ExpertCaches.statistics
+            lines.append(
+                "Akıtılan katman: \(Edge0ExpertCaches.layerCount),"
+                    + " önbellek isabeti \(hitRate(statistics))")
+        }
+
+        lines.append("MLX aktif: \(ModelManager.formatBytes(ModelManager.mlxActiveMemoryBytes))")
+        lines.append("MLX tepe: \(ModelManager.formatBytes(ModelManager.mlxPeakMemoryBytes))")
+        lines.append(
+            "Uygulamaya kalan: "
+                + ModelManager.formatBytes(ModelManager.availableProcessMemoryBytes))
+        lines.append("Cihaz belleği: \(ModelManager.formatBytes(ModelManager.physicalMemoryBytes))")
+        lines.append("Boş disk: \(ModelManager.formatBytes(models.freeDiskSpace))")
+
+        return lines.joined(separator: "\n")
     }
 
     /// Share of expert reads served from RAM rather than from storage. A low
