@@ -81,7 +81,11 @@ final class ChatViewModel {
         liveTokenCount = 0
         Haptics.tap(enabled: settings.hapticsEnabled)
 
-        let index = messages.count - 1
+        // Identity, not position: opening a saved conversation mid-generation
+        // replaces `messages` wholesale, and a late chunk addressed by index
+        // would be written into someone else's transcript.
+        let target = messages[messages.count - 1].id
+        let conversation = conversationID
         MLX.GPU.resetPeakMemory()
 
         generationTask = Task { [weak self] in
@@ -97,12 +101,12 @@ final class ChatViewModel {
                         if firstTokenAt == nil {
                             firstTokenAt = Date.timeIntervalSinceReferenceDate
                         }
-                        self.append(chunk, at: index, since: firstTokenAt)
+                        self.append(chunk, to: target, in: conversation, since: firstTokenAt)
                     }
 
                     if let info = generation.info {
                         self.finish(
-                            at: index,
+                            target, in: conversation,
                             metrics: GenerationMetrics(
                                 tokensPerSecond: info.tokensPerSecond,
                                 timeToFirstTokenMS: ((firstTokenAt ?? started) - started) * 1000,
@@ -112,9 +116,13 @@ final class ChatViewModel {
                             ))
                     }
                 }
-                self.closeStream(at: index)
+                self.closeStream(target, in: conversation)
+            } catch is CancellationError {
+                // The user pressed stop; `stop()` has already tidied the
+                // message up, and this is not something to show as an error.
+                self.closeStream(target, in: conversation)
             } catch {
-                self.fail(at: index, message: error.localizedDescription)
+                self.fail(target, in: conversation, message: error.localizedDescription)
             }
 
             self.isGenerating = false
@@ -232,8 +240,17 @@ final class ChatViewModel {
 
     // MARK: Stream plumbing
 
-    private func append(_ chunk: String, at index: Int, since firstTokenAt: TimeInterval?) {
-        guard messages.indices.contains(index) else { return }
+    /// Position of the message being streamed into, or nil if the transcript
+    /// it belonged to is no longer the one on screen.
+    private func index(of id: UUID, in conversation: UUID) -> Int? {
+        guard conversation == conversationID else { return nil }
+        return messages.firstIndex { $0.id == id }
+    }
+
+    private func append(
+        _ chunk: String, to id: UUID, in conversation: UUID, since firstTokenAt: TimeInterval?
+    ) {
+        guard let index = index(of: id, in: conversation) else { return }
         messages[index].text += chunk
         liveTokenCount += 1
         if let firstTokenAt {
@@ -244,22 +261,22 @@ final class ChatViewModel {
         }
     }
 
-    private func finish(at index: Int, metrics: GenerationMetrics) {
-        guard messages.indices.contains(index) else { return }
+    private func finish(_ id: UUID, in conversation: UUID, metrics: GenerationMetrics) {
+        guard let index = index(of: id, in: conversation) else { return }
         messages[index].metrics = metrics
         messages[index].isStreaming = false
     }
 
-    private func closeStream(at index: Int) {
-        guard messages.indices.contains(index) else { return }
+    private func closeStream(_ id: UUID, in conversation: UUID) {
+        guard let index = index(of: id, in: conversation) else { return }
         messages[index].isStreaming = false
         if messages[index].text.isEmpty, messages[index].metrics == nil {
             messages[index].text = "(boş yanıt)"
         }
     }
 
-    private func fail(at index: Int, message: String) {
-        guard messages.indices.contains(index) else { return }
+    private func fail(_ id: UUID, in conversation: UUID, message: String) {
+        guard let index = index(of: id, in: conversation) else { return }
         messages[index].isStreaming = false
         messages[index].failed = true
         messages[index].text =

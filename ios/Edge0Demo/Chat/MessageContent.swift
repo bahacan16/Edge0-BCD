@@ -125,7 +125,11 @@ struct ParsedMessage: Equatable {
             emit(.paragraph, body)
         }
 
-        var lines = text.components(separatedBy: .newlines)[...]
+        // CharacterSet.newlines splits CRLF into two, which would turn a
+        // single hard break into a blank line and end the paragraph early.
+        var lines = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: .newlines)[...]
 
         while let line = lines.first {
             lines = lines.dropFirst()
