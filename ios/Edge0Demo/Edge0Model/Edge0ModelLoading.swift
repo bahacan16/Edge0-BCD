@@ -193,7 +193,7 @@ enum Edge0Loader {
         let container: ModelContainer
         var report: Edge0LoRAReport?
 
-        if streamExperts || tier.requiresExpertStreaming {
+        if tier.supportsExpertStreaming, streamExperts || tier.requiresExpertStreaming {
             // The 35B checkpoint is far larger than any phone's memory, so its
             // experts stay on disk and are read per step.
             let loaded = try await Edge0StreamingLoader.load(

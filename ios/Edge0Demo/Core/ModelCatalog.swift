@@ -72,6 +72,11 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// Whether this tier has a streaming expert implementation. Only the
+    /// Qwen3.5-MoE backbone is wired for it today; the 8B tier's experts are
+    /// small enough to stay resident anyway.
+    var supportsExpertStreaming: Bool { requiresExpertStreaming }
+
     var expertCount: Int {
         switch self {
         case .edge0_8b: 128

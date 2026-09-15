@@ -119,7 +119,8 @@ struct SettingsView: View {
                 title: "MLX önbellek sınırı", value: settings.gpuCacheLimitMB,
                 range: 0...1024, step: 32, unit: "MB")
             Toggle("Expert akışı (SSD offload)", isOn: settings.expertStreaming)
-                .disabled(models.activeTier?.requiresExpertStreaming == true)
+                .disabled(!(models.activeTier ?? settings.wrappedValue.selectedTier)
+                    .supportsExpertStreaming)
             StepperRow(
                 title: "Katman başına expert önbelleği", value: settings.hotExpertSlots,
                 range: 4...64, step: 4)
