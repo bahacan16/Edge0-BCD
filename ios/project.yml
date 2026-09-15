@@ -24,6 +24,9 @@ settings:
     DEVELOPMENT_TEAM: ""
 
 packages:
+  MLXSwift:
+    url: https://github.com/ml-explore/mlx-swift
+    from: 0.31.6
   MLXSwiftLM:
     url: https://github.com/ml-explore/mlx-swift-lm
     from: 3.31.3
@@ -51,6 +54,12 @@ targets:
         product: MLXLMCommon
       - package: MLXSwiftLM
         product: MLXHuggingFace
+      - package: MLXSwift
+        product: MLX
+      - package: MLXSwift
+        product: MLXNN
+      - package: MLXSwift
+        product: MLXFast
       - package: SwiftHuggingFace
         product: HuggingFace
       - package: SwiftTransformers

@@ -12,10 +12,12 @@ final class ChatViewModel {
         ChatMessage(
             role: .system,
             text: """
-                Edge0 Demo: cihaz üzerinde (on-device) çalışan küçük bir dil modeli.
-                İlk mesajınızı gönderdiğinizde model Hugging Face'ten indirilir \
-                (Wi-Fi önerilir, birkaç yüz MB) ve sonraki tüm üretim tamamen \
-                telefonda, internete gitmeden çalışır.
+                Edge0-8B (Edge0/Edge0-8B-A1B-preview): Edge0-AI/edge0'ın Ling 3.0 \
+                tabanlı hibrit modeli, cihaz üzerinde çalışıyor. İlk mesajınızda \
+                model + LoRA adaptörü Hugging Face'ten indirilir (Wi-Fi önerilir, \
+                ~4-5 GB), sonrasında tamamen telefonda, internete gitmeden üretim \
+                yapılır. SSD expert-offload/prerouter hızlandırması yok — model \
+                tamamen bellekte tutuluyor.
                 """
         )
     ]
@@ -23,7 +25,6 @@ final class ChatViewModel {
     var isBusy = false
     var statusText = "Hazır"
 
-    private let modelConfiguration = LLMRegistry.gemma3_1B_qat_4bit
     private var session: ChatSession?
 
     func send() {
@@ -55,8 +56,14 @@ final class ChatViewModel {
             return session
         }
 
-        statusText = "Model indiriliyor (ilk çalıştırma birkaç dakika sürebilir)…"
-        let model = try await #huggingFaceLoadModelContainer(configuration: modelConfiguration)
+        statusText = "Edge0-8B indiriliyor (ilk çalıştırma uzun sürebilir, ~4-5 GB)…"
+        let model = try await Edge0Model.load { [weak self] progress in
+            Task { @MainActor in
+                let pct = Int(progress.fractionCompleted * 100)
+                self?.statusText = "Edge0-8B indiriliyor… %\(pct)"
+            }
+        }
+        statusText = "Model yükleniyor…"
         let newSession = ChatSession(model)
         session = newSession
         return newSession
