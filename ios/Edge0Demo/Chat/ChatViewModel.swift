@@ -162,20 +162,30 @@ final class ChatViewModel {
         discardSession()
     }
 
+    /// The conversation as shareable Markdown, or nil when there is nothing
+    /// to share yet.
+    var transcript: String? {
+        guard !messages.isEmpty else { return nil }
+        return conversation().transcript
+    }
+
     /// Writes the transcript to disk. Called when a turn ends, not per token.
     func persist() {
         guard !messages.isEmpty else { return }
+        store.save(conversation())
+    }
+
+    private func conversation() -> Conversation {
         let title = messages.first { $0.role == .user }.map { Conversation.title(from: $0.text) }
             ?? "Yeni sohbet"
-        store.save(
-            Conversation(
-                id: conversationID,
-                title: title,
-                tier: models.activeTier ?? settings.selectedTier,
-                createdAt: conversationCreatedAt,
-                updatedAt: Date(),
-                messages: messages
-            ))
+        return Conversation(
+            id: conversationID,
+            title: title,
+            tier: models.activeTier ?? settings.selectedTier,
+            createdAt: conversationCreatedAt,
+            updatedAt: Date(),
+            messages: messages
+        )
     }
 
     /// Called when the loaded model changes so the next turn starts clean.

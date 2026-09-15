@@ -59,6 +59,11 @@ Bu, yerleşik yolun yaptığı matematiğin aynısıdır.
 - **Ayarlar** — sıcaklık / top-p / top-k / tekrar cezası / maks. token (tier
   varsayılanlarıyla), sistem istemi, düşünme modu, LoRA anahtarı, MLX önbellek
   sınırı, expert önbellek bütçesi ve canlı bellek/önbellek göstergeleri.
+- **Tanılama** — Ayarlar'ın altındaki *Tanılama bilgisini kopyala* düğmesi;
+  yüklü tier, sağlık kontrolü sonucu ve modelin açılışta ürettiği örnek,
+  eşleşen/eşleşmeyen LoRA hedefleri, üretim parametreleri, expert önbellek
+  isabeti ve bellek rakamlarını tek blok halinde panoya kopyalar. Model saçma
+  çıktı verirse bildirilecek şey budur.
 
 Model dosyaları `Application Support` altında tutulur (iOS'un temizleyebildiği
 `Caches` değil) ve iCloud yedeğinden hariç tutulur. Sohbetler de aynı yerde,
@@ -94,8 +99,10 @@ cd ios && xcodegen generate && open Edge0Demo.xcodeproj
 ## Bilinen sınırlar
 
 - Modellerin çıktı kalitesi cihazda **henüz doğrulanmadı**. 8B mimarisi bu
-  depoda elle portlandı; sayısal bir hata çıktıyı bozabilir. İlk çalıştırmada
-  anlamsız metin görürsen sorun büyük olasılıkla buradadır.
+  depoda elle portlandı; sayısal bir hata çıktıyı bozabilir. Yükleme sonrası
+  sağlık kontrolü 12 adımlık bir üretim yapıp sonucu Ayarlar'da gösterir —
+  oradaki "açılış örneği" anlamsızsa sorun porttadır, sohbeti denemeye gerek
+  kalmadan bellidir.
 - 35B'de uzun promptlar yavaştır: prompt işlenirken çok sayıda farklı expert
   diskten okunur. Kısa promptlarda ve devam eden sohbette çok daha hızlıdır
   (yönlendirme ardışık tokenlar arasında büyük ölçüde aynı kalır).

@@ -37,6 +37,30 @@ struct Conversation: Codable, Identifiable, Equatable {
         }
     }
 
+    /// The transcript as Markdown, for sharing out of the app.
+    ///
+    /// The chain of thought is left out for the same reason it is left out of
+    /// the model's own history: it is working notes, not the answer.
+    var transcript: String {
+        var lines = ["# \(title)"]
+        if let tier { lines.append("_\(tier.displayName) · cihaz üzerinde_") }
+        lines.append("")
+
+        for message in messages {
+            switch message.role {
+            case .user:
+                lines.append("**Sen**")
+                lines.append(message.text)
+            case .assistant:
+                lines.append("**Edge0**")
+                lines.append(ParsedMessage.parse(message.text).answer
+                    .trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+            lines.append("")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     static func title(from text: String) -> String {
         let cleaned = text
             .trimmingCharacters(in: .whitespacesAndNewlines)

@@ -120,6 +120,14 @@ struct ChatView: View {
             }
         }
         ToolbarItem(placement: .topBarTrailing) {
+            if let transcript = viewModel?.transcript {
+                ShareLink(item: transcript) {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .accessibilityLabel("Sohbeti paylaş")
+            }
+        }
+        ToolbarItem(placement: .topBarTrailing) {
             Button {
                 showingHistory = true
             } label: {
@@ -306,7 +314,6 @@ private struct Composer: View {
                         .stroke(Color.primary.opacity(0.08), lineWidth: 1)
                 )
                 .focused($focused)
-                .submitLabel(.send)
 
             Button(action: isGenerating ? onStop : onSend) {
                 Image(systemName: isGenerating ? "stop.fill" : "arrow.up")
