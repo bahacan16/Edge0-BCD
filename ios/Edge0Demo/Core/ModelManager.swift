@@ -35,6 +35,9 @@ final class ModelManager {
     private(set) var freeDiskSpace: Int64 = 0
 
     private var loadTask: Task<Void, Never>?
+    /// Last progress sample and a smoothed rate, for the download ETA.
+    private var lastProgressSample: (at: Date, bytes: Int64)?
+    private var smoothedBytesPerSecond: Double = 0
     /// `deinit` is nonisolated, so the token it has to release cannot be
     /// main-actor state. Only `init` and `deinit` touch it.
     nonisolated(unsafe) private var memoryWarningObserver: (any NSObjectProtocol)?
@@ -110,6 +113,8 @@ final class ModelManager {
 
         unload()
         pendingTier = tier
+        lastProgressSample = nil
+        smoothedBytesPerSecond = 0
         phase = .downloading(fraction: 0, detail: "Bağlanılıyor…")
         // A multi-GB download dies if the screen locks and the app suspends.
         UIApplication.shared.isIdleTimerDisabled = true
@@ -194,20 +199,73 @@ final class ModelManager {
 
     private func report(_ progress: Progress) {
         let fraction = progress.fractionCompleted
+        let total = progress.totalUnitCount
+        let completed = progress.completedUnitCount
         let detail: String
-        if progress.totalUnitCount > 0, progress.totalUnitCount < 200 {
-            detail = "Dosya \(progress.completedUnitCount + 1)/\(progress.totalUnitCount)"
-        } else if progress.totalUnitCount > 0 {
-            detail =
-                "\(Self.formatBytes(progress.completedUnitCount)) / \(Self.formatBytes(progress.totalUnitCount))"
+
+        if total > 0, total < 200 {
+            // Small unit counts mean the downloader is counting files.
+            detail = "Dosya \(completed + 1)/\(total)"
+        } else if total > 0 {
+            var parts = ["\(Self.formatBytes(completed)) / \(Self.formatBytes(total))"]
+            if let rate = updateRate(completed: completed), rate > 0 {
+                parts.append("\(Self.formatBytes(Int64(rate)))/sn")
+                // The 35B checkpoint is a multi-hour download on most
+                // connections; a bare percentage says nothing about whether
+                // to wait for it or go to bed.
+                let remaining = Double(total - completed) / rate
+                if remaining.isFinite, remaining > 0 {
+                    parts.append("~\(Self.formatDuration(remaining))")
+                }
+            }
+            detail = parts.joined(separator: " · ")
         } else {
             detail = "İndiriliyor…"
         }
+
         if fraction >= 1.0 {
             phase = .preparing("Ağırlıklar yükleniyor…")
         } else {
             phase = .downloading(fraction: fraction, detail: detail)
         }
+    }
+
+    /// Exponentially smoothed download rate in bytes per second. Raw samples
+    /// swing wildly as files start and finish, which makes an ETA built on
+    /// them jump around uselessly.
+    private func updateRate(completed: Int64) -> Double? {
+        let now = Date()
+        guard let previous = lastProgressSample else {
+            lastProgressSample = (now, completed)
+            return nil
+        }
+
+        let elapsed = now.timeIntervalSince(previous.at)
+        let delta = completed - previous.bytes
+        // The baseline only advances when a sample is actually taken.
+        // Resetting it on every call would keep the window under the
+        // threshold forever and no rate would ever be computed.
+        guard elapsed > 0.5, delta >= 0 else {
+            return smoothedBytesPerSecond > 0 ? smoothedBytesPerSecond : nil
+        }
+        lastProgressSample = (now, completed)
+
+        let sample = Double(delta) / elapsed
+        smoothedBytesPerSecond =
+            smoothedBytesPerSecond == 0
+            ? sample
+            : smoothedBytesPerSecond * 0.8 + sample * 0.2
+        return smoothedBytesPerSecond
+    }
+
+    static func formatDuration(_ seconds: Double) -> String {
+        let total = Int(seconds.rounded())
+        if total < 60 { return "\(total) sn" }
+        let minutes = total / 60
+        if minutes < 60 { return "\(minutes) dk" }
+        let hours = minutes / 60
+        let remainder = minutes % 60
+        return remainder == 0 ? "\(hours) sa" : "\(hours) sa \(remainder) dk"
     }
 
     // MARK: Memory
