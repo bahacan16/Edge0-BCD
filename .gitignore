@@ -24,3 +24,4 @@ scripts/alignment_results.json
 # runtime and a few megabytes of wheels have no business in the repository.
 ios/Python.xcframework/
 ios/Resources/app_packages/
+ios/python-install-report.txt

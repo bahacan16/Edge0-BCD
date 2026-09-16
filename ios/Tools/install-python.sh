@@ -67,9 +67,17 @@ install_dylib () {
 
 install_python "$XCFRAMEWORK" "$@"
 
-# Proof, in the build log, that the packaging did what it claims. The device
-# answers whether the interpreter runs; this answers whether it was assembled,
-# and the two failures look nothing alike once they are separated.
+# Proof that the packaging did what it claims. The device answers whether the
+# interpreter runs; this answers whether it was assembled, and the two failures
+# look nothing alike once they are separated.
+#
+# Written to a file as well as the log. The build step's own output runs to
+# tens of thousands of lines and job logs can only be read from the end, so a
+# report printed here is a report that cannot be retrieved — which has already
+# cost this work two rounds.
+REPORT="$PROJECT_DIR/python-install-report.txt"
+exec > >(tee "$REPORT") 2>&1
+
 echo "== bundle python layout =="
 ls -1 "$CODESIGNING_FOLDER_PATH/python/lib" 2>/dev/null || echo "NO python/lib"
 echo "-- framework count: $(find "$CODESIGNING_FOLDER_PATH/Frameworks" -maxdepth 1 -name '*.framework' 2>/dev/null | wc -l | tr -d ' ')"

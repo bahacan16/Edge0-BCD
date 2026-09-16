@@ -144,6 +144,8 @@ jobs:
         run: |
           set +e
           FW=ios/Python.xcframework/ios-arm64/Python.framework
+          echo "== install-python report"
+          cat ios/python-install-report.txt 2>/dev/null || echo "(no report written)"
           echo "== framework tree"
           find "$FW" -maxdepth 2 -not -path '*/Headers/*' | head -30
           echo "== Modules/module.modulemap"
