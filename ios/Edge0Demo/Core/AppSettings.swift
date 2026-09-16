@@ -43,7 +43,20 @@ final class AppSettings {
         didSet { store(usePrerouter, "usePrerouter") }
     }
 
+    /// Let the app size the expert cache from the device and the checkpoint,
+    /// and adjust it from what the device actually does.
+    ///
+    /// On is the sane default and the manual stepper below only applies when
+    /// this is off. The number this replaces was chosen once at first launch
+    /// from whatever was free at that moment, frozen, and then applied as a
+    /// hard ceiling forever — which went wrong in both directions inside one
+    /// afternoon without anything being able to notice.
+    var automaticMemoryTuning: Bool {
+        didSet { store(automaticMemoryTuning, "automaticMemoryTuning") }
+    }
+
     /// Total RAM the streamed experts may cache, across every MoE layer.
+    /// Applies only when `automaticMemoryTuning` is off.
     ///
     /// A decode step touches only K experts per layer, but prompt processing
     /// walks many more, so a cache is what keeps prefill from re-reading the
@@ -113,6 +126,8 @@ final class AppSettings {
         useLoRA = d.object(forKey: Self.key("useLoRA")) as? Bool ?? true
         expertStreaming =
             d.object(forKey: Self.key("expertStreaming")) as? Bool ?? tier.requiresExpertStreaming
+        automaticMemoryTuning =
+            d.object(forKey: Self.key("automaticMemoryTuning")) as? Bool ?? true
         expertCacheBudgetMB =
             d.object(forKey: Self.key("expertCacheBudgetMB")) as? Int
             ?? Self.defaultExpertCacheBudgetMB

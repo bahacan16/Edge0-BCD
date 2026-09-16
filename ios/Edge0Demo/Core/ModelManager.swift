@@ -66,7 +66,7 @@ final class ModelManager {
         memoryWarningObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didReceiveMemoryWarningNotification,
             object: nil, queue: .main
-        ) { _ in
+        ) { [weak self] _ in
             // Always cheap and always safe: MLX's own buffer cache is pure
             // slack and giving it back costs nothing but a few reallocations.
             MLX.GPU.clearCache()
@@ -83,8 +83,16 @@ final class ModelManager {
                 Edge0Log.memory("bellek uyarısı — yer var, önbelleğe dokunulmadı")
                 return
             }
+            let before = Edge0ExpertCaches.slotsPerLayer
             let slots = Edge0ExpertCaches.relieve()
             Edge0Meter.countRelief()
+            // Remembered against the tier, and written through now rather than
+            // at the end of the run: what this is protecting against is the
+            // process being killed, and a lesson still in memory when that
+            // happens is a lesson not learned.
+            if let tier = self?.activeTier ?? self?.pendingTier {
+                Edge0MemoryPlanner.recordPressure(tier: tier, at: before)
+            }
             Edge0Log.memory(
                 "bellek uyarısı — expert önbelleği yarıya indi (katman başına \(slots) slot)")
         }
@@ -151,7 +159,9 @@ final class ModelManager {
             "hazırlanıyor: \(tier.rawValue) · LoRA \(settings.useLoRA)"
                 + " · akış \(settings.expertStreaming)"
                 + " · prerouter \(settings.usePrerouter)"
-                + " · önbellek \(settings.expertCacheBudgetMB) MB")
+                + (settings.automaticMemoryTuning
+                    ? " · önbellek otomatik"
+                    : " · önbellek elle \(settings.expertCacheBudgetMB) MB"))
         Edge0Log.memory("yükleme öncesi")
         phase = .downloading(fraction: 0, detail: "Bağlanılıyor…")
         // A multi-GB download dies if the screen locks and the app suspends.
@@ -176,6 +186,7 @@ final class ModelManager {
                     applyLoRA: settings.useLoRA,
                     gpuCacheLimitMB: settings.gpuCacheLimitMB,
                     expertCacheBudgetMB: settings.expertCacheBudgetMB,
+                    automaticMemory: settings.automaticMemoryTuning,
                     streamExperts: settings.expertStreaming,
                     usePrerouter: settings.usePrerouter,
                     onProgress: { progress in

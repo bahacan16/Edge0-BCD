@@ -153,9 +153,40 @@ struct SettingsView: View {
                 .supportsExpertStreaming
                 || (models.activeTier ?? settings.wrappedValue.selectedTier)
                     .requiresExpertStreaming)
-            StepperRow(
-                title: "Expert önbelleği", value: settings.expertCacheBudgetMB,
-                range: 256...4096, step: 256, unit: "MB")
+            Toggle("Otomatik bellek ayarı", isOn: settings.automaticMemoryTuning)
+            if settings.wrappedValue.automaticMemoryTuning {
+                let tier = models.activeTier ?? settings.wrappedValue.selectedTier
+                let remembered = Edge0MemoryPlanner.rememberedSlots(for: tier)
+                Text(
+                    "Expert önbelleği, cihazın o an verdiği belleğe ve bu kontrol"
+                        + " noktasının gerçek expert boyutuna göre yükleme anında"
+                        + " hesaplanır. Bellek daralırsa küçülür, sonraki yüklemede"
+                        + " yeniden dener — yani cihazın cevabı hatırlanır."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                if remembered > 0 {
+                    LabeledContent(
+                        "\(tier.displayName) için öğrenilen", value: "\(remembered) slot"
+                    )
+                    .font(.caption)
+                    Button("Öğrenileni sıfırla") {
+                        Edge0MemoryPlanner.forget(tier: tier)
+                    }
+                    .font(.caption)
+                }
+            } else {
+                StepperRow(
+                    title: "Expert önbelleği", value: settings.expertCacheBudgetMB,
+                    range: 256...4096, step: 256, unit: "MB")
+                Text(
+                    "Elle seçilen bütçe, cihazda gerçekten boş olan belleğe göre"
+                        + " yine de kırpılır: elle ayar seçmek demektir, olmayan"
+                        + " belleği istemek değil."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
             let prerouterTier = models.activeTier ?? settings.wrappedValue.selectedTier
             Toggle("Prerouter (bir adım önden okuma)", isOn: settings.usePrerouter)
                 .disabled(prerouterTier.prerouterFileName == nil)
@@ -304,7 +335,10 @@ struct SettingsView: View {
 
         lines.append("LoRA açık: \(settings.useLoRA)")
         lines.append("Expert akışı: \(settings.expertStreaming)")
-        lines.append("Expert önbelleği: \(settings.expertCacheBudgetMB) MB")
+        lines.append(
+            settings.automaticMemoryTuning
+                ? "Expert önbelleği: otomatik"
+                : "Expert önbelleği: elle \(settings.expertCacheBudgetMB) MB")
         lines.append("Prerouter: \(settings.usePrerouter)")
         lines.append("MLX önbellek sınırı: \(settings.gpuCacheLimitMB) MB")
         lines.append(

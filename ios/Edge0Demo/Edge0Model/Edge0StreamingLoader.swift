@@ -46,6 +46,7 @@ enum Edge0StreamingLoader {
         directory: URL,
         tokenizerLoader: any TokenizerLoader,
         expertCacheBudgetBytes: Int,
+        automaticMemory: Bool,
         loraURL: URL?,
         prerouterURL: URL?
     ) async throws -> (context: ModelContext, loraReport: Edge0LoRAReport?) {
@@ -119,8 +120,9 @@ enum Edge0StreamingLoader {
         //    holds by the time the cache is big enough to care.
         let prerouterBytes = prerouterURL.map(fileSize(of:)) ?? 0
         let installed = installStreamingExperts(
-            in: model, shards: shards, budgetBytes: expertCacheBudgetBytes,
-            reservedBytes: 1_536 * 1024 * 1024 + prerouterBytes,
+            in: model, tier: tier, shards: shards,
+            budgetBytes: expertCacheBudgetBytes, automatic: automaticMemory,
+            prerouterBytes: prerouterBytes,
             groupSize: quantization?.groupSize ?? 64, bits: quantization?.bits ?? 4)
         guard installed > 0 else {
             throw Edge0StreamingLoaderError.noExpertTensors(directory.lastPathComponent)
@@ -191,7 +193,8 @@ enum Edge0StreamingLoader {
     /// experts", it is forty times that, and on this checkpoint it is well over
     /// a gigabyte.
     private static func installStreamingExperts(
-        in model: Module, shards: SafetensorsShardSet, budgetBytes: Int, reservedBytes: Int,
+        in model: Module, tier: Edge0Tier, shards: SafetensorsShardSet,
+        budgetBytes: Int, automatic: Bool, prerouterBytes: Int,
         groupSize: Int, bits: Int
     ) -> Int {
         var blocks: [(block: E0Qwen35SparseMoeBlock, names: ExpertTensorNames)] = []
@@ -205,33 +208,26 @@ enum Edge0StreamingLoader {
         }
         guard let first = blocks.first else { return 0 }
 
-        let perExpert = first.names.bytesPerExpert(shards: shards)
-
-        // Sized against what is free *now*, with the resident weights already
-        // in memory — the budget the user set was chosen before any of this
-        // was loaded. Whatever is left minus a reserve for the KV cache and
-        // activations is what the experts may have.
+        // One expert of THIS checkpoint, not of a checkpoint in general: a 35B
+        // expert and an 8B one are not the same size, and the slot count is the
+        // number that decides decode speed. Every miss is a read from storage,
+        // and with 256 experts a small cache means nearly every layer of every
+        // token goes to disk.
         //
-        // This is the one number that decides decode speed. Every miss is a
-        // read from storage, and with 256 experts a small cache means nearly
-        // every layer of every token goes to disk.
-        let available = Int(os_proc_available_memory()) - reservedBytes
-        let affordable = max(0, available)
-        let effective = min(budgetBytes, affordable)
-        let slots = min(96, max(2, effective / max(1, blocks.count * perExpert)))
+        // The prerouter's heads are about to land in memory too, so their space
+        // is taken out of what the experts may have before the plan is made.
+        let perExpert = first.names.bytesPerExpert(shards: shards)
+        let plan = Edge0MemoryPlanner.make(
+            tier: tier, automatic: automatic,
+            manualBudgetBytes: budgetBytes,
+            perExpertBytes: perExpert, layerCount: blocks.count,
+            alsoReserving: prerouterBytes)
+        let slots = plan.slotsPerLayer
 
-        // Which of the two limits actually bound the cache, spelled out. The
-        // setting is a number chosen once, at first launch, from whatever the
-        // device happened to have free at that moment; reinstall the app on a
-        // busier day and it silently comes back smaller. That is worth being
-        // able to read off the log rather than infer from a slot count.
-        let bound = budgetBytes <= affordable ? "ayar" : "bellek"
         Edge0Log.write(
-            "expert önbelleği: istenen \(budgetBytes / 1_048_576) MB,"
-                + " kullanılabilir \(affordable / 1_048_576) MB,"
-                + " expert başına \(perExpert / 1024) KB,"
-                + " katman başına \(slots) slot (\(blocks.count) katman)"
-                + " — sınırlayan: \(bound)")
+            "expert önbelleği: \(plan.detail) → katman başına \(slots) slot"
+                + " (\(blocks.count) katman, expert başına \(perExpert / 1024) KB,"
+                + " toplam \(plan.budgetBytes / 1_048_576) MB)")
 
         for (block, names) in blocks {
             let streaming = Edge0StreamingSwitchGLU(

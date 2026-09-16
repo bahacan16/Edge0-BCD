@@ -361,6 +361,7 @@ enum Edge0Loader {
         applyLoRA: Bool,
         gpuCacheLimitMB: Int,
         expertCacheBudgetMB: Int,
+        automaticMemory: Bool,
         streamExperts: Bool,
         usePrerouter: Bool,
         onProgress: @escaping @Sendable (Progress) -> Void,
@@ -402,6 +403,7 @@ enum Edge0Loader {
                 directory: directory,
                 tokenizerLoader: Edge0TokenizerLoader(),
                 expertCacheBudgetBytes: expertCacheBudgetMB * 1024 * 1024,
+                automaticMemory: automaticMemory,
                 loraURL: applyLoRA ? loraURL : nil,
                 prerouterURL: usePrerouter ? prerouterURL : nil
             )
@@ -458,6 +460,15 @@ enum Edge0Loader {
         // this run is the comparable one: same prompt, same twelve greedy
         // tokens, every load. A setting can be judged from a load alone.
         Edge0Log.write(Edge0Meter.report(prerouter: usePrerouter))
+
+        // The health check is the first time the cache is put under real
+        // pressure — it fills during the prompt and then twelve greedy tokens
+        // run against it. Getting through that without the device asking for
+        // memory back is the evidence that this slot count fits, so it is the
+        // right place to let the ceiling rise.
+        if Edge0Meter.snapshot.reliefs == 0 {
+            Edge0MemoryPlanner.recordClean(tier: tier, at: Edge0ExpertCaches.slotsPerLayer)
+        }
         guard health.passed else { throw Edge0HealthError.failed(health.detail) }
 
         return Edge0LoadedModel(
