@@ -57,16 +57,20 @@ struct ModelsView: View {
         }
         .fileImporter(
             isPresented: $showingImporter,
-            allowedContentTypes: [.folder],
-            allowsMultipleSelection: false
+            // Files as well as folders: picking the files inside the folder is
+            // the route that works when folder-scoped access does not, and it
+            // is the one the error messages point people to.
+            allowedContentTypes: [.folder, .item],
+            allowsMultipleSelection: true
         ) { result in
-            guard let tier = importingTier else { return }
+            // Falling back to the selected tier rather than returning: a lost
+            // `importingTier` used to make the picker look like it did nothing.
+            let tier = importingTier ?? settings.selectedTier
             importingTier = nil
             switch result {
             case .success(let urls):
-                guard let url = urls.first else { return }
                 settings.selectedTier = tier
-                models.importModel(tier: tier, from: url, settings: settings)
+                models.importModel(tier: tier, from: urls, settings: settings)
             case .failure(let error):
                 importError = error.localizedDescription
             }
@@ -321,7 +325,7 @@ private struct TierCard: View {
                 .disabled(models.phase.isBusy || !models.hasRoom(for: tier))
             }
 
-            if !isBusyWithThis, !isDownloaded {
+            if !isBusyWithThis {
                 // A 23 GB re-download over the phone is worth avoiding when the
                 // files are already sitting on a Mac, in iCloud Drive or on a
                 // USB-C drive.

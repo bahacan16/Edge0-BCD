@@ -73,8 +73,13 @@ sohbet başına bir JSON dosyası olarak saklanır.
 
 35B ~23 GB; dosyalar zaten bir Mac'te, iCloud Drive'da veya USB-C diskte
 duruyorsa telefondan tekrar indirmeye gerek yok. Modeller sekmesindeki
-**klasör** düğmesi bir klasör seçtirir ve gerekli dosyaları uygulamanın kendi
-deposuna kopyalar.
+**klasör** düğmesi seçtiğin dosyaları uygulamanın kendi deposuna kopyalar.
+
+Klasörün kendisini de seçebilirsin, ama **klasöre girip dosyaları seçmek daha
+güvenilir**: klasör seçimi, Files'ın uygulamaya dizin erişimi vermesine ve
+içindeki her dosyanın cihaza inmiş olmasına bağlı, ve olmadığında "Aç"
+düğmesi hiçbir şey yapmıyormuş gibi görünüyor. iCloud'da duran ama henüz
+inmemiş dosyalar için uygulama hangi dosyanın eksik olduğunu söyler.
 
 Klasörde şunlar olmalı:
 

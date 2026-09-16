@@ -2,32 +2,50 @@
 //
 // The app can download both tiers itself, but the 35B checkpoint is ~23 GB.
 // Anyone who already has it — on a Mac, in iCloud Drive, on a USB-C drive —
-// should not have to pull it again over the phone's connection, so a folder
-// can be handed to the app directly instead.
+// should not have to pull it again over the phone's connection, so files can
+// be handed to the app directly instead.
+//
+// Both a folder and a straight multi-selection of files are accepted. Picking
+// the files is the more reliable route: folder selection depends on the Files
+// picker granting scoped access to a directory and on every item inside it
+// being materialised, and it fails in ways that look like the picker simply
+// ignoring the Open button.
 //
 // The copy is chunked rather than a single `copyItem` so that a multi-hour
-// import can report progress and be cancelled.
+// import reports progress and can be cancelled.
 
 import Foundation
 
 enum Edge0ImportError: LocalizedError {
-    case notReadable
+    case nothingSelected
+    case notReadable(String)
     case missingConfig
     case noWeights
     case notEnoughSpace(needed: Int64, free: Int64)
+    case notDownloaded(String)
 
     var errorDescription: String? {
         switch self {
-        case .notReadable:
-            "Seçilen klasör okunamadı."
+        case .nothingSelected:
+            "Hiçbir dosya seçilmedi."
+        case .notReadable(let name):
+            "Okunamadı: \(name). Klasör yerine dosyaları seçmeyi deneyin."
         case .missingConfig:
-            "Klasörde config.json yok — model klasörünün kendisini seçin."
+            """
+            Seçimde config.json yok. Klasörün içine girip tüm dosyaları seçin \
+            (veya klasörün kendisini seçin).
+            """
         case .noWeights:
-            "Klasörde model ağırlığı (model-*.safetensors) yok."
+            "Seçimde model ağırlığı (model-*.safetensors) yok."
         case .notEnoughSpace(let needed, let free):
             """
             Yeterli yer yok: \(ModelManager.formatBytes(needed)) gerekiyor, \
             \(ModelManager.formatBytes(free)) boş.
+            """
+        case .notDownloaded(let name):
+            """
+            \(name) henüz iCloud'dan inmemiş. Dosyalar uygulamasında yanındaki \
+            bulut simgesine dokunup indirin, sonra tekrar deneyin.
             """
         }
     }
@@ -45,37 +63,44 @@ enum Edge0Importer {
             || name.hasSuffix(".jinja") || name.hasSuffix(".model") || name.hasSuffix(".txt")
     }
 
-    /// Copies the importable files of `source` into the tier's own directory.
+    /// One file to bring in, with the scoped parent it was reached through.
+    private struct Source {
+        let url: URL
+        let name: String
+        let size: Int64
+    }
+
+    /// Copies the importable files of `sources` into the tier's own directory.
     ///
-    /// `source` is expected to be security-scoped; the caller opens and closes
-    /// that access around this call.
+    /// `sources` may be folders, individual files, or a mix; each is expected
+    /// to carry its own security scope from the picker.
     static func run(
         tier: Edge0Tier,
-        from source: URL,
+        from sources: [URL],
         onProgress: @Sendable @escaping (_ copied: Int64, _ total: Int64) -> Void
     ) throws -> URL {
-        let manager = FileManager.default
-        guard
-            let names = try? manager.contentsOfDirectory(atPath: source.path)
-        else { throw Edge0ImportError.notReadable }
-
-        let wanted = names.filter(shouldImport).sorted()
-        guard wanted.contains("config.json") else { throw Edge0ImportError.missingConfig }
-        guard wanted.contains(where: { $0.hasSuffix(".safetensors") && $0.hasPrefix("model") })
-        else { throw Edge0ImportError.noWeights }
-
-        var total: Int64 = 0
-        for name in wanted {
-            let values = try? source.appendingPathComponent(name)
-                .resourceValues(forKeys: [.fileSizeKey])
-            total += Int64(values?.fileSize ?? 0)
+        var scoped: [URL] = []
+        defer { for url in scoped { url.stopAccessingSecurityScopedResource() } }
+        for url in sources where url.startAccessingSecurityScopedResource() {
+            scoped.append(url)
         }
 
+        let files = try collect(from: sources)
+        guard !files.isEmpty else { throw Edge0ImportError.nothingSelected }
+        guard files.contains(where: { $0.name == "config.json" }) else {
+            throw Edge0ImportError.missingConfig
+        }
+        guard files.contains(where: { $0.name.hasSuffix(".safetensors") }) else {
+            throw Edge0ImportError.noWeights
+        }
+
+        let total = files.reduce(Int64(0)) { $0 + $1.size }
         let free = Edge0Storage.freeDiskSpace
         guard free > total else {
             throw Edge0ImportError.notEnoughSpace(needed: total, free: free)
         }
 
+        let manager = FileManager.default
         // Import into a staging directory and move it into place at the end,
         // so a cancelled or failed import never leaves something that looks
         // like a usable model.
@@ -87,11 +112,10 @@ enum Edge0Importer {
 
         var copied: Int64 = 0
         do {
-            for name in wanted {
+            for file in files {
                 try Task.checkCancellation()
                 try copy(
-                    from: source.appendingPathComponent(name),
-                    to: staging.appendingPathComponent(name),
+                    file, to: staging.appendingPathComponent(file.name),
                     copied: &copied, total: total, onProgress: onProgress)
             }
         } catch {
@@ -106,19 +130,68 @@ enum Edge0Importer {
         return destination
     }
 
+    /// Flattens the selection into the files worth copying, whether the user
+    /// picked a folder or the files inside it.
+    private static func collect(from sources: [URL]) throws -> [Source] {
+        let manager = FileManager.default
+        var files: [Source] = []
+        var seen: Set<String> = []
+
+        for url in sources {
+            var isDirectory: ObjCBool = false
+            guard manager.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+                throw Edge0ImportError.notReadable(url.lastPathComponent)
+            }
+
+            let candidates: [URL]
+            if isDirectory.boolValue {
+                guard
+                    let names = try? manager.contentsOfDirectory(atPath: url.path)
+                else { throw Edge0ImportError.notReadable(url.lastPathComponent) }
+                candidates = names.sorted().map { url.appendingPathComponent($0) }
+            } else {
+                candidates = [url]
+            }
+
+            for candidate in candidates {
+                let name = candidate.lastPathComponent
+                guard shouldImport(name), seen.insert(name).inserted else { continue }
+                try ensureMaterialised(candidate)
+                let values = try? candidate.resourceValues(forKeys: [.fileSizeKey])
+                files.append(
+                    Source(url: candidate, name: name, size: Int64(values?.fileSize ?? 0)))
+            }
+        }
+        return files
+    }
+
+    /// A file in iCloud Drive may be a placeholder with no bytes behind it.
+    /// Reading one silently yields nothing, so ask for it and say so plainly
+    /// rather than importing an empty file.
+    private static func ensureMaterialised(_ url: URL) throws {
+        let values = try? url.resourceValues(forKeys: [
+            .isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey,
+        ])
+        guard values?.isUbiquitousItem == true else { return }
+        if values?.ubiquitousItemDownloadingStatus == .current { return }
+        try? FileManager.default.startDownloadingUbiquitousItem(at: url)
+        throw Edge0ImportError.notDownloaded(url.lastPathComponent)
+    }
+
     /// Chunked so progress advances within a single multi-gigabyte shard and
     /// cancellation is noticed promptly.
     private static func copy(
-        from source: URL, to destination: URL,
+        _ file: Source, to destination: URL,
         copied: inout Int64, total: Int64,
         onProgress: @Sendable (Int64, Int64) -> Void
     ) throws {
         let manager = FileManager.default
-        guard let input = try? FileHandle(forReadingFrom: source) else {
-            throw Edge0ImportError.notReadable
+        guard let input = try? FileHandle(forReadingFrom: file.url) else {
+            throw Edge0ImportError.notReadable(file.name)
         }
         defer { try? input.close() }
 
+        try? manager.removeItem(at: destination)
         manager.createFile(atPath: destination.path, contents: nil)
         let output = try FileHandle(forWritingTo: destination)
         defer { try? output.close() }

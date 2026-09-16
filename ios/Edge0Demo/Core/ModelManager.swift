@@ -176,9 +176,15 @@ final class ModelManager {
     /// Copies a checkpoint the user already has into the app's storage, then
     /// loads it. Reuses the load stamp and phase machinery so an import cannot
     /// race a download, and so cancelling works the same way.
-    func importModel(tier: Edge0Tier, from source: URL, settings: AppSettings) {
-        guard loadTask == nil else { return }
-
+    func importModel(tier: Edge0Tier, from sources: [URL], settings: AppSettings) {
+        guard !sources.isEmpty else {
+            phase = .failed(Edge0ImportError.nothingSelected.localizedDescription)
+            pendingTier = tier
+            return
+        }
+        // An import is an explicit instruction, so it takes over from whatever
+        // was running rather than returning in silence — which looked exactly
+        // like the button doing nothing.
         unload()
         pendingTier = tier
         lastProgressSample = nil
@@ -195,13 +201,8 @@ final class ModelManager {
                 if self?.loadGeneration == generation { self?.loadTask = nil }
             }
             do {
-                // The picked folder lives outside the sandbox; access has to be
-                // opened around every read of it and closed afterwards.
-                let scoped = source.startAccessingSecurityScopedResource()
-                defer { if scoped { source.stopAccessingSecurityScopedResource() } }
-
                 try await Task.detached(priority: .utility) {
-                    _ = try Edge0Importer.run(tier: tier, from: source) { copied, total in
+                    _ = try Edge0Importer.run(tier: tier, from: sources) { copied, total in
                         Task { @MainActor [weak self] in
                             guard self?.loadGeneration == generation else { return }
                             self?.reportCopy(copied: copied, total: total)
