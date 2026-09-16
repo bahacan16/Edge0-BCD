@@ -38,12 +38,25 @@ struct Edge0ToolProbeReport: Sendable {
     var sample = ""
     /// The call shape found in `sample`, when one was.
     var callMarker: String?
+    /// The call, once parsed — which is the real test: a marker only says the
+    /// model wrote something tool-shaped, and this says the app can read it.
+    var parsedName: String?
+    var parsedArguments: [String: String] = [:]
+    var dialect: String?
     var error: String?
 
     var verdict: String {
         if let error { return "çalıştırılamadı: \(error)" }
         if !templateAcceptsTools { return "şablon araçları yok sayıyor" }
-        if let callMarker { return "araç çağrısı üretti (\(callMarker))" }
+        if let parsedName, let dialect {
+            let arguments =
+                parsedArguments
+                .sorted { $0.key < $1.key }
+                .map { "\($0.key)=\($0.value)" }
+                .joined(separator: ", ")
+            return "\(parsedName)(\(arguments)) · \(dialect)"
+        }
+        if let callMarker { return "çağrı üretti ama çözümlenemedi (\(callMarker))" }
         return "şablon araçları tanıyor, model bu istemde çağrı üretmedi"
     }
 }
@@ -126,6 +139,11 @@ enum Edge0ToolProbe {
 
             report.sample = greedy(model: model, tokenizer: tokenizer, prompt: tooled)
             report.callMarker = callShape(in: report.sample)
+            if let call = Edge0ToolCallParser.calls(in: report.sample).first {
+                report.parsedName = call.name
+                report.parsedArguments = call.arguments
+                report.dialect = call.dialect.rawValue
+            }
         } catch {
             report.error = error.localizedDescription
         }
