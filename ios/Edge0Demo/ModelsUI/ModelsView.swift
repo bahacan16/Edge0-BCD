@@ -348,6 +348,20 @@ private struct TierCard: View {
                 .accessibilityLabel("Dosyalardan içe aktar")
             }
 
+            if isActive, !isBusyWithThis {
+                // The only way to get the memory back was to kill the app. A
+                // loaded 35B holds about four gigabytes, and wanting it gone —
+                // to load the other tier, or just to use the phone — is not an
+                // unusual thing to want.
+                Button {
+                    models.unload()
+                } label: {
+                    Image(systemName: "eject")
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Modeli bellekten çıkar")
+            }
+
             if isDownloaded {
                 Button(role: .destructive, action: onDelete) {
                     Image(systemName: "trash")

@@ -7,6 +7,7 @@ struct SettingsView: View {
     @Environment(ModelManager.self) private var models
     @State private var memoryTick = Date()
     @State private var copiedDiagnostics = false
+    @FocusState private var promptFocused: Bool
 
     private let timer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
@@ -23,6 +24,7 @@ struct SettingsView: View {
                 aboutSection
             }
             .navigationTitle("Ayarlar")
+            .scrollDismissesKeyboard(.interactively)
         }
         .onReceive(timer) { _ in memoryTick = Date() }
     }
@@ -129,6 +131,13 @@ struct SettingsView: View {
                 .lineLimit(2...6)
                 .font(.system(size: 13))
                 .textFieldStyle(.plain)
+                .focused($promptFocused)
+                .toolbar {
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button("Bitti") { promptFocused = false }
+                    }
+                }
             }
             Toggle("Düşünme modu", isOn: settings.thinkingMode)
         }

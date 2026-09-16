@@ -15,6 +15,15 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
         }
     }
 
+    /// For places with no room for the full name — the chat toolbar sits beside
+    /// a title and three buttons, and "Edge0 35B" there becomes "E".
+    var shortName: String {
+        switch self {
+        case .edge0_8b: "8B"
+        case .edge0_35b: "35B"
+        }
+    }
+
     var tagline: String {
         switch self {
         case .edge0_8b: "8B toplam · 1B aktif · 128 expert"

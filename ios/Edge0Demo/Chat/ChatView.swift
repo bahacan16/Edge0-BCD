@@ -7,6 +7,7 @@ struct ChatView: View {
     @Environment(ConversationStore.self) private var conversations
     @State private var viewModel: ChatViewModel?
     @State private var showingHistory = false
+    @State private var showingAttachmentPicker = false
     @FocusState private var composerFocused: Bool
     @Binding var selectedTab: RootTab
     @Environment(\.scenePhase) private var scenePhase
@@ -42,6 +43,16 @@ struct ChatView: View {
         .sheet(isPresented: $showingHistory) {
             HistoryView(currentID: viewModel?.conversationID ?? UUID()) { conversation in
                 viewModel?.open(conversation)
+            }
+        }
+        .fileImporter(
+            isPresented: $showingAttachmentPicker,
+            allowedContentTypes: Edge0AttachmentReader.contentTypes,
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case .success(let urls): viewModel?.attach(urls)
+            case .failure(let error): viewModel?.errorMessage = error.localizedDescription
             }
         }
     }
@@ -105,9 +116,12 @@ struct ChatView: View {
                 text: $viewModel.input,
                 isGenerating: viewModel.isGenerating,
                 canSend: viewModel.canSend,
+                attachments: viewModel.attachments,
                 focused: $composerFocused,
                 onSend: viewModel.send,
-                onStop: viewModel.stop
+                onStop: viewModel.stop,
+                onAttach: { showingAttachmentPicker = true },
+                onRemove: viewModel.removeAttachment
             )
         }
     }
@@ -116,7 +130,8 @@ struct ChatView: View {
     private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
             if let tier = models.activeTier {
-                TierPill(tier: tier)
+                Button { selectedTab = .models } label: { TierPill(tier: tier) }
+                    .accessibilityLabel("Yüklü model: \(tier.displayName)")
             }
         }
         ToolbarItem(placement: .topBarTrailing) {
@@ -294,12 +309,41 @@ private struct Composer: View {
     @Binding var text: String
     let isGenerating: Bool
     let canSend: Bool
+    let attachments: [Edge0Attachment]
     @FocusState.Binding var focused: Bool
     let onSend: () -> Void
     let onStop: () -> Void
+    let onAttach: () -> Void
+    let onRemove: (Edge0Attachment) -> Void
 
     var body: some View {
+        VStack(spacing: 8) {
+            if !attachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(attachments) { attachment in
+                            AttachmentChip(attachment: attachment) { onRemove(attachment) }
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                }
+            }
+            composer
+        }
+        .padding(.vertical, 10)
+        .background(.bar)
+    }
+
+    private var composer: some View {
         HStack(alignment: .bottom, spacing: 10) {
+            Button(action: onAttach) {
+                Image(systemName: "paperclip")
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(width: 38, height: 38)
+            }
+            .disabled(isGenerating)
+            .accessibilityLabel("Dosya ekle")
+
             TextField("Bir şey sor…", text: $text, axis: .vertical)
                 .lineLimit(1...6)
                 .font(.system(size: 16))
@@ -314,6 +358,17 @@ private struct Composer: View {
                         .stroke(Color.primary.opacity(0.08), lineWidth: 1)
                 )
                 .focused($focused)
+                // Without this there is no way back from the keyboard on a
+                // multi-line field: return inserts a newline, and the send
+                // button is the only other target — so asking a question and
+                // then wanting to read the answer meant being stuck behind the
+                // keyboard.
+                .toolbar {
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button("Bitti") { focused = false }
+                    }
+                }
 
             Button(action: isGenerating ? onStop : onSend) {
                 Image(systemName: isGenerating ? "stop.fill" : "arrow.up")
@@ -326,8 +381,6 @@ private struct Composer: View {
             .animation(.easeInOut(duration: 0.15), value: isGenerating)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(.bar)
     }
 
     private var buttonStyle: AnyShapeStyle {
@@ -360,15 +413,54 @@ private struct LiveMetricsBar: View {
     }
 }
 
+private struct AttachmentChip: View {
+    let attachment: Edge0Attachment
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "doc.text")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.cyan)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(attachment.name)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                Text(attachment.summary)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityLabel("\(attachment.name) dosyasını kaldır")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
+        )
+        .frame(maxWidth: 220)
+    }
+}
+
 private struct TierPill: View {
     let tier: Edge0Tier
 
     var body: some View {
         HStack(spacing: 5) {
             Circle().fill(Theme.gradient(for: tier)).frame(width: 7, height: 7)
-            Text(tier.displayName)
+            // The short name, because the long one does not fit beside a title
+            // and three buttons: it was being truncated to a lone "E", which
+            // reads as a mystery button rather than as the loaded model.
+            Text(tier.shortName)
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .fixedSize()
         }
+        .foregroundStyle(.primary)
         .padding(.horizontal, 9)
         .padding(.vertical, 5)
         .background(Capsule().fill(Color.primary.opacity(0.07)))

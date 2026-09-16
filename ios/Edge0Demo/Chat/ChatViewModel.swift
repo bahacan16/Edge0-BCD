@@ -57,22 +57,53 @@ final class ChatViewModel {
     }
 
     var canSend: Bool {
-        !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        (!input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
             && !isGenerating
             && models.phase == .ready
     }
 
     // MARK: Actions
 
+    /// Files riding along with the next turn. Cleared once it is sent — an
+    /// attachment belongs to the question that was asked with it, not to the
+    /// conversation, and silently re-sending a file on every later turn would
+    /// make each one slower than the last for no reason anyone could see.
+    var attachments: [Edge0Attachment] = []
+
+    func attach(_ urls: [URL]) {
+        for url in urls {
+            do {
+                let attachment = try Edge0AttachmentReader.read(url)
+                guard !attachments.contains(where: { $0.name == attachment.name }) else { continue }
+                attachments.append(attachment)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func removeAttachment(_ attachment: Edge0Attachment) {
+        attachments.removeAll { $0.id == attachment.id }
+    }
+
     func send() {
-        let prompt = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !prompt.isEmpty, !isGenerating else { return }
+        let typed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        let files = attachments
+        guard !typed.isEmpty || !files.isEmpty, !isGenerating else { return }
+
+        // What the model sees: the files first, then the question. What the
+        // transcript shows is the same thing, so reopening a conversation later
+        // shows what was actually asked rather than a question missing its
+        // context.
+        let block = files.promptBlock()
+        let prompt = block.isEmpty ? typed : (typed.isEmpty ? block : "\(block)\n\n\(typed)")
         guard let session = currentSession() else {
             errorMessage = "Önce Modeller sekmesinden bir model yükleyin."
             return
         }
 
         input = ""
+        attachments = []
         errorMessage = nil
         messages.append(ChatMessage(role: .user, text: prompt))
         messages.append(ChatMessage(role: .assistant, text: "", isStreaming: true))
