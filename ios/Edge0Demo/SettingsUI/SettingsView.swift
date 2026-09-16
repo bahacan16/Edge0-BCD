@@ -8,6 +8,8 @@ struct SettingsView: View {
     @State private var memoryTick = Date()
     @State private var copiedDiagnostics = false
     @FocusState private var promptFocused: Bool
+    @State private var toolReport: Edge0ToolProbeReport?
+    @State private var probing = false
 
     private let timer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
@@ -20,6 +22,7 @@ struct SettingsView: View {
                 samplingSection($settings)
                 conversationSection($settings)
                 runtimeSection($settings)
+                toolSection
                 interfaceSection($settings)
                 aboutSection
             }
@@ -256,6 +259,73 @@ struct SettingsView: View {
         Section("Arayüz") {
             Toggle("Ölçümleri göster", isOn: settings.showMetrics)
             Toggle("Titreşim", isOn: settings.hapticsEnabled)
+        }
+    }
+
+    /// Whether this checkpoint can be driven with tools, answered against the
+    /// checkpoint rather than against a model card.
+    @ViewBuilder
+    private var toolSection: some View {
+        Section("Araç çağırma") {
+            if models.phase != .ready {
+                Text("Test için önce bir model yükleyin.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Button {
+                    runToolProbe()
+                } label: {
+                    Label(
+                        probing ? "Deneniyor…" : "Araç çağırmayı dene",
+                        systemImage: "wrench.and.screwdriver")
+                }
+                .disabled(probing)
+
+                if let report = toolReport {
+                    LabeledContent("Sonuç", value: report.verdict)
+                        .font(.caption)
+                    LabeledContent(
+                        "Araç bildirimi",
+                        value: "\(report.promptTokens - report.baselineTokens) token"
+                    )
+                    .font(.caption)
+                    if !report.sample.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Modelin cevabı")
+                                .font(.system(size: 12, weight: .medium))
+                            Text(report.sample)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+
+                Text(
+                    "Şablona sahte bir get_weather aracı verilir ve istemin"
+                        + " değişip değişmediğine bakılır; değişiyorsa model"
+                        + " greedy olarak çalıştırılıp bir çağrı üretip"
+                        + " üretmediği ve hangi biçimde ürettiği ölçülür."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func runToolProbe() {
+        guard let loaded = models.loaded else { return }
+        probing = true
+        Task {
+            let report = await loaded.container.perform { context in
+                Edge0ToolProbe.run(model: context.model, tokenizer: context.tokenizer)
+            }
+            Edge0Log.write("araç çağırma denemesi: \(report.verdict)")
+            if !report.sample.isEmpty {
+                Edge0Log.write("araç denemesi çıktısı: \(report.sample)")
+            }
+            toolReport = report
+            probing = false
         }
     }
 
