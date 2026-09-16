@@ -404,24 +404,34 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
     /// every expert at once, which would stack the entire layer — the exact
     /// allocation this class exists to avoid.
     ///
-    /// It tracks the cache size because the stack is a transient copy on top
-    /// of the cache: a fixed ceiling would let a device given a small budget
-    /// still allocate the same large stack during prefill, which is where the
-    /// budget matters most. The floor keeps it comfortably above the experts
-    /// a single token routes to, so splitting always terminates.
+    /// Sized from bytes rather than from the cache, and generously, because
+    /// every split re-reads. A prompt whose 150 distinct experts get halved
+    /// down to pieces of twenty is not doing a twentieth of the work; it is
+    /// doing the same reads again on each piece, and prefill is where the
+    /// splitting happens. Measured: about fifteen thousand of the twenty
+    /// thousand expert lookups in a 35-token answer were prompt processing.
+    /// The stack is transient — one layer's worth, freed when the layer is
+    /// done — so a few hundred megabytes of it buys back thousands of reads.
     private let maxExpertsPerCall: Int
+
+    /// Decode-sized stacks are memoised; a prefill-sized one is not, because
+    /// holding it would keep hundreds of megabytes alive for the rest of the
+    /// run to serve a set of experts no later step will ask for again.
+    private let memoiseUpTo: Int
 
     init(
         shards: SafetensorsShardSet,
         names: ExpertTensorNames,
         quantization: ExpertQuantization,
-        hotSlots: Int
+        hotSlots: Int,
+        maxExpertsPerCall: Int
     ) {
         self.pool = ExpertSlotPool(
             shards: shards, names: names, capacity: hotSlots)
         self.quantization = quantization
         self.activationFunction = MLXNN.silu
-        self.maxExpertsPerCall = max(8, hotSlots)
+        self.maxExpertsPerCall = max(8, maxExpertsPerCall)
+        self.memoiseUpTo = max(8, hotSlots)
         super.init(inputDims: 1, hiddenDims: 1, numExperts: 1, bias: false)
         Edge0ExpertCaches.register(self)
     }
@@ -540,7 +550,7 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
             downScales: MLX.stacked(slices.map(\.downScales)),
             downBiases: stackedOptional(slices.map(\.downBiases))
         )
-        lastSlots = (experts, slots)
+        if experts.count <= memoiseUpTo { lastSlots = (experts, slots) }
         return slots
     }
 

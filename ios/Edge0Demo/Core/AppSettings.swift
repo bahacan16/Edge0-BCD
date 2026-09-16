@@ -69,6 +69,10 @@ final class AppSettings {
     /// Load the last used tier at launch, if it is already on disk. Only ever
     /// touches a downloaded checkpoint, so it never starts a download by
     /// itself.
+    ///
+    /// Off by default. Loading a 23 GB checkpoint takes the better part of a
+    /// minute and claims most of the phone's memory, which is not what opening
+    /// an app should do to you before you have said what you want.
     var autoLoadLastModel: Bool {
         didSet { store(autoLoadLastModel, "autoLoadLastModel") }
     }
@@ -133,7 +137,7 @@ final class AppSettings {
             ?? Self.defaultExpertCacheBudgetMB
 
         usePrerouter = d.object(forKey: Self.key("usePrerouter")) as? Bool ?? false
-        autoLoadLastModel = d.object(forKey: Self.key("autoLoadLastModel")) as? Bool ?? true
+        autoLoadLastModel = d.object(forKey: Self.key("autoLoadLastModel")) as? Bool ?? false
 
         temperature = d.object(forKey: Self.key("temperature")) as? Double
             ?? Double(defaults.temperature)

@@ -229,12 +229,19 @@ enum Edge0StreamingLoader {
                 + " (\(blocks.count) katman, expert başına \(perExpert / 1024) KB,"
                 + " toplam \(plan.budgetBytes / 1_048_576) MB)")
 
+        // How many distinct experts one call may stack before it starts
+        // splitting the prompt into pieces. Bytes, not slots: the stack is a
+        // transient copy freed when the layer finishes, and every split makes
+        // the pieces re-read what the whole would have read once.
+        let maxStack = max(16, 320 * 1024 * 1024 / max(1, perExpert))
+
         for (block, names) in blocks {
             let streaming = Edge0StreamingSwitchGLU(
                 shards: shards,
                 names: names,
                 quantization: ExpertQuantization(groupSize: groupSize, bits: bits),
-                hotSlots: slots
+                hotSlots: slots,
+                maxExpertsPerCall: maxStack
             )
             // NOT `block.switchMLP = streaming`. @ModuleInfo's setter traps
             // outright once the property holds a value — assigning through it
