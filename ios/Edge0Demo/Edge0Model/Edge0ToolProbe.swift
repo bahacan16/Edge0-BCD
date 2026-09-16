@@ -49,8 +49,15 @@ struct Edge0ToolProbeReport: Sendable {
 }
 
 enum Edge0ToolProbe {
-    private static let question = "İstanbul'da hava nasıl? Gerekiyorsa aracı kullan."
-    private static let steps = 48
+    private static let question = "İstanbul'da hava durumu nedir?"
+    /// Generous, and stopped early the moment a call appears.
+    ///
+    /// Forty-eight was not: both tiers spent every one of those tokens
+    /// *reasoning about* the call and got cut off before making it. The 35B's
+    /// was unambiguous — "I have a tool `get_weather` ... I should call this
+    /// tool with İstanbul as the city" — which is a model doing the right thing
+    /// and a probe too impatient to watch it finish.
+    private static let steps = 320
 
     /// A minimal OpenAI-shaped function, which is the shape every template that
     /// supports tools expects.
@@ -76,8 +83,20 @@ enum Edge0ToolProbe {
     /// say which parser this checkpoint would need.
     private static let markers = [
         "<tool_call>", "<|tool_call|>", "<function_call>", "<|action_start|>",
-        "```json", "<tools>",
+        "<tool▁call▁begin|>", "<tools>", "```json",
     ]
+
+    /// A bare call with no wrapper around it — some templates ask for exactly
+    /// this, and a marker list alone would score it as prose.
+    private static func looksLikeBareCall(_ text: String) -> Bool {
+        text.contains("\"name\"") && text.contains("get_weather")
+            && (text.contains("\"arguments\"") || text.contains("\"parameters\""))
+    }
+
+    static func callShape(in text: String) -> String? {
+        if let marker = markers.first(where: { text.contains($0) }) { return marker }
+        return looksLikeBareCall(text) ? "sarmalayıcısız JSON" : nil
+    }
 
     static func run(model: any LanguageModel, tokenizer: any MLXLMCommon.Tokenizer)
         -> Edge0ToolProbeReport
@@ -86,10 +105,14 @@ enum Edge0ToolProbe {
         let messages: [[String: any Sendable]] = [["role": "user", "content": question]]
 
         do {
+            // Thinking off. Both tiers reason before answering, and a reasoning
+            // preamble is not the thing being measured — it is the thing that
+            // hid the answer the first time this ran.
+            let context: [String: any Sendable] = ["enable_thinking": false]
             let baseline = try tokenizer.applyChatTemplate(
-                messages: messages, tools: nil, additionalContext: nil)
+                messages: messages, tools: nil, additionalContext: context)
             let tooled = try tokenizer.applyChatTemplate(
-                messages: messages, tools: [weatherTool], additionalContext: nil)
+                messages: messages, tools: [weatherTool], additionalContext: context)
 
             report.baselineTokens = baseline.count
             report.promptTokens = tooled.count
@@ -102,7 +125,7 @@ enum Edge0ToolProbe {
             guard report.templateAcceptsTools, report.toolNameInPrompt else { return report }
 
             report.sample = greedy(model: model, tokenizer: tokenizer, prompt: tooled)
-            report.callMarker = markers.first { report.sample.contains($0) }
+            report.callMarker = callShape(in: report.sample)
         } catch {
             report.error = error.localizedDescription
         }
@@ -121,12 +144,23 @@ enum Edge0ToolProbe {
         eval(logits)
 
         var generated: [Int] = []
-        for _ in 0 ..< steps {
+        for step in 0 ..< steps {
             let next = MLX.argMax(logits[.ellipsis, -1, 0...], axis: -1)
             eval(next)
             let token = next.item(Int.self)
             if let eos = tokenizer.eosToken, tokenizer.convertTokenToId(eos) == token { break }
             generated.append(token)
+
+            // Checked as it goes, so a checkpoint that calls immediately costs
+            // a second rather than the full run. Every sixteen tokens because
+            // decoding is cheap next to a forward pass but not free, and a call
+            // marker is several tokens wide anyway.
+            if step % 16 == 15,
+                callShape(in: tokenizer.decode(tokenIds: generated)) != nil
+            {
+                break
+            }
+
             logits = model(next.reshaped(1, 1), cache: cache)
             eval(logits)
         }

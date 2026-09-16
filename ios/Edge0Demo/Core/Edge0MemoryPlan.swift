@@ -85,6 +85,16 @@ enum Edge0MemoryPlanner {
 
         let fromMemory = clamp(slotsFor(affordable))
         let remembered = rememberedSlots(for: tier)
+        // A level that has already run the device short is not somewhere to
+        // climb back to. Without this the plan walks into the same wall every
+        // few loads: 27 slots ran clean, 31 tripped a warning and was halved to
+        // 15, and the climb would have gone 18, 22, 27, 31 and tripped again.
+        // Staying below three quarters of the level that failed converges and
+        // stays there — and the measurements say it costs nothing, since
+        // everything from about 15 slots upward runs at the same speed.
+        let failed = failedSlots(for: tier)
+        let headroom = failed > 0 ? max(floorSlots, failed * 3 / 4) : ceilingSlots
+
         let slots: Int
         let detail: String
         if remembered > 0 {
@@ -95,12 +105,13 @@ enum Edge0MemoryPlanner {
             // thing standing between this model and the disk, so it can afford
             // to find its ceiling in three loads rather than eight.
             let allowed = remembered + max(2, remembered / 4)
-            slots = clamp(min(fromMemory, allowed))
+            slots = clamp(min(fromMemory, allowed, headroom))
             detail =
                 "otomatik · bellek \(fromMemory) slot verirdi,"
                 + " cihaz son seferinde \(remembered) slotta durdu"
+                + (failed > 0 ? ", \(failed) slotta daralmıştı" : "")
         } else {
-            slots = fromMemory
+            slots = clamp(min(fromMemory, headroom))
             detail = "otomatik · \(affordable / 1_048_576) MB kullanılabilir"
         }
         return Edge0MemoryPlan(
@@ -123,16 +134,26 @@ enum Edge0MemoryPlanner {
     /// return to it slowly. Written through immediately, because the failure
     /// this protects against is the process being killed outright, and a lesson
     /// still sitting in memory when that happens is a lesson not learned.
-    static func recordPressure(tier: Edge0Tier, survivingAt slots: Int) {
+    static func recordPressure(tier: Edge0Tier, survivingAt slots: Int, failedAt failed: Int) {
+        let previousFailure = failedSlots(for: tier)
+        if previousFailure == 0 || failed < previousFailure {
+            store(failed, for: tier, key: failureKey(tier))
+        }
         let remembered = rememberedSlots(for: tier)
         guard remembered == 0 || slots < remembered else { return }
-        store(max(floorSlots, slots), for: tier)
+        store(max(floorSlots, slots), for: tier, key: key(tier))
+    }
+
+    /// The smallest cache size that has run this device short. Nothing climbs
+    /// back to it.
+    static func failedSlots(for tier: Edge0Tier) -> Int {
+        UserDefaults.standard.integer(forKey: failureKey(tier))
     }
 
     /// The tier loaded and answered at `slots` without running short.
     static func recordClean(tier: Edge0Tier, at slots: Int) {
         guard slots > rememberedSlots(for: tier) else { return }
-        store(slots, for: tier)
+        store(slots, for: tier, key: key(tier))
     }
 
     static func rememberedSlots(for tier: Edge0Tier) -> Int {
@@ -140,16 +161,22 @@ enum Edge0MemoryPlanner {
     }
 
     static func forget(tier: Edge0Tier) {
-        UserDefaults.standard.removeObject(forKey: key(tier))
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: key(tier))
+        defaults.removeObject(forKey: failureKey(tier))
     }
 
-    private static func store(_ slots: Int, for tier: Edge0Tier) {
+    private static func store(_ slots: Int, for tier: Edge0Tier, key: String) {
         let defaults = UserDefaults.standard
-        defaults.set(slots, forKey: key(tier))
+        defaults.set(slots, forKey: key)
         defaults.synchronize()
     }
 
     private static func key(_ tier: Edge0Tier) -> String {
         "edge0.autoSlots.\(tier.rawValue)"
+    }
+
+    private static func failureKey(_ tier: Edge0Tier) -> String {
+        "edge0.autoSlotsFailed.\(tier.rawValue)"
     }
 }

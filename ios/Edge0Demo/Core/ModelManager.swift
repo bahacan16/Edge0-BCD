@@ -85,6 +85,7 @@ final class ModelManager {
             // produced is worse than no log.
             let available = ModelManager.availableProcessMemoryBytes
             let free = ModelManager.formatBytes(available)
+            let before = Edge0ExpertCaches.slotsPerLayer
             guard available < ModelManager.memoryFloorBytes else {
                 Edge0Log.write("bellek uyarısı — \(free) yer var, önbelleğe dokunulmadı")
                 return
@@ -96,7 +97,8 @@ final class ModelManager {
             // process being killed, and a lesson still in memory when that
             // happens is a lesson not learned.
             if let tier = self?.activeTier ?? self?.pendingTier {
-                Edge0MemoryPlanner.recordPressure(tier: tier, survivingAt: slots)
+                Edge0MemoryPlanner.recordPressure(
+                    tier: tier, survivingAt: slots, failedAt: before)
             }
             Edge0Log.write(
                 "bellek uyarısı — \(free) kalmıştı, expert önbelleği yarıya indi"
