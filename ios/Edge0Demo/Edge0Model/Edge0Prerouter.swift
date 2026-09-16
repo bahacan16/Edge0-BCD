@@ -29,6 +29,7 @@
 
 import Foundation
 import MLX
+import MLXLMCommon
 import MLXNN
 
 enum Edge0PrerouterError: LocalizedError {
@@ -41,7 +42,8 @@ enum Edge0PrerouterError: LocalizedError {
         case .noHeads(let url):
             "Prerouter başlıkları okunamadı: \(url.lastPathComponent)"
         case .missingOwners(let layers):
-            "Prerouter ağırlıklarında eksik katmanlar: \(layers.prefix(5).map(String.init).joined(separator: ", "))"
+            "Prerouter ağırlıklarında eksik katmanlar: "
+                + layers.prefix(5).map { "\($0)" }.joined(separator: ", ")
         case .shapeMismatch(let detail):
             "Prerouter ağırlık boyutu uyuşmuyor: \(detail)"
         }

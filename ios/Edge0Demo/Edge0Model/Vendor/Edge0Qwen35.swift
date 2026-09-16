@@ -488,7 +488,9 @@ final class E0Qwen35SparseMoeBlock: Module, UnaryLayer {
             inds = predicted.indices
             scores = predicted.scores
         } else {
-            (inds, scores) = route(x)
+            let routed = route(x)
+            inds = routed.0
+            scores = routed.1
         }
 
         prerouter.capture(layer: prerouterLayer, input: x, oneHot: prerouter.oneHot(inds))
