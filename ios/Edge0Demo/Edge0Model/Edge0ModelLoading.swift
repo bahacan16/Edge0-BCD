@@ -137,11 +137,30 @@ enum Edge0Storage {
         return contents.contains { $0.hasSuffix(".safetensors") }
     }
 
+    /// A usable checkpoint at `directory`, or in one of its immediate
+    /// subfolders.
+    ///
+    /// Dragging the downloaded folder into the tier's folder, rather than its
+    /// contents, is the obvious thing to do and leaves the files one level
+    /// deeper than the loader looks. Checking one level down costs a directory
+    /// listing and saves a correct-looking drop from reading as "nothing
+    /// happened".
+    private static func usableDirectory(at directory: URL) -> URL? {
+        if isUsable(directory) { return directory }
+        guard
+            let entries = try? FileManager.default.contentsOfDirectory(
+                at: directory, includingPropertiesForKeys: [.isDirectoryKey])
+        else { return nil }
+        return entries.first { entry in
+            (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+                && isUsable(entry)
+        }
+    }
+
     /// The checkpoint to load, wherever it came from. An imported copy wins:
     /// the user put it there deliberately.
     static func localDirectory(for tier: Edge0Tier) -> URL? {
-        let imported = importedDirectory(for: tier)
-        if isUsable(imported) { return imported }
+        if let imported = usableDirectory(at: importedDirectory(for: tier)) { return imported }
         if let snapshot = snapshotDirectory(for: tier), isUsable(snapshot) { return snapshot }
         return nil
     }
@@ -152,7 +171,7 @@ enum Edge0Storage {
 
     /// True when the tier's files were imported rather than downloaded.
     static func isImported(_ tier: Edge0Tier) -> Bool {
-        isUsable(importedDirectory(for: tier))
+        usableDirectory(at: importedDirectory(for: tier)) != nil
     }
 
     /// Bytes occupied by a tier, following the blob store rather than the
