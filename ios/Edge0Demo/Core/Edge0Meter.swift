@@ -93,6 +93,17 @@ enum Edge0Meter {
                 format: " · isabet %%%.0f (%d/%d)",
                 Double(statistics.hits) / Double(total) * 100, statistics.hits, total)
         }
+        // What a miss actually costs, which is the question the hit rate cannot
+        // answer. An expert is ~1.7 MB of mapped file: if a miss is a fraction
+        // of a millisecond it was a copy from a page the kernel still had, and
+        // the cache is competing with a page cache that was doing the job for
+        // free. If it is milliseconds, it went to storage, and every slot is
+        // worth having.
+        if statistics.misses > 0 {
+            line += String(
+                format: " · ıska başına %.2f ms",
+                meter.expert / Double(statistics.misses) * 1000)
+        }
         line += " · slot \(Edge0ExpertCaches.slotsPerLayer)"
         if meter.reliefs > 0 {
             line += " · bellek uyarısı \(meter.reliefs)× (isabet bundan düşük)"

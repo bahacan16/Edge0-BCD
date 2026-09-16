@@ -35,13 +35,15 @@ enum Edge0MemoryPlanner {
     /// Left alone for the KV cache, the activations and MLX's own transient
     /// graph, none of which exist yet when the plan is made.
     ///
-    /// Measured rather than guessed: with the resident weights in and about
-    /// 5.35 GB left to the process, a cache of 3.30 GB peaked MLX at 5.38 GB
-    /// and ran the phone out; 2.77 GB peaked at 5.22 GB and was still warned
-    /// about; 2.97 GB on an earlier build ran clean. So roughly 2.5 GB has to
-    /// stay unclaimed, and the remembered ceiling below covers the rest of the
-    /// distance.
-    private static let graphReserveBytes = 2_560 * 1024 * 1024
+    /// Measured rather than guessed, and revised once already: with the
+    /// resident weights in and about 5.35 GB left to the process, caches of
+    /// 3.30, 2.77 and 2.70 GB all ran the phone short — the last of those with
+    /// 2.5 GB nominally held back, which is how this number got bigger. What it
+    /// is really compensating for is that `os_proc_available_memory` is
+    /// generous: it reported 6.98 GB on a device that started warning once MLX
+    /// held 5.1. The remembered ceiling below covers the rest of the distance,
+    /// and covers it per device rather than per guess.
+    private static let graphReserveBytes = 3_072 * 1024 * 1024
 
     /// A cache smaller than this is not worth calling one — a decode step alone
     /// routes to K experts per layer.
@@ -108,17 +110,19 @@ enum Edge0MemoryPlanner {
 
     // MARK: What the device said
 
-    /// The tier ran genuinely short at `slots`, so next time start below it.
+    /// The tier ran short and was cut back to `slots`, which is the size it
+    /// then went on to survive at. That is the number worth keeping — the one
+    /// that failed is known to fail, and anything between the two is a guess.
     ///
-    /// Written through immediately. The failure this protects against is the
-    /// process being killed outright, and a lesson still sitting in memory when
-    /// that happens is a lesson not learned.
-    static func recordPressure(tier: Edge0Tier, at slots: Int) {
-        let lowered = max(floorSlots, slots * 3 / 4)
-        guard lowered < rememberedSlots(for: tier) || rememberedSlots(for: tier) == 0 else {
-            return
-        }
-        store(lowered, for: tier)
+    /// Together with the eighth-at-a-time climb in `make`, this is additive
+    /// increase and multiplicative decrease: back off hard from a real limit,
+    /// return to it slowly. Written through immediately, because the failure
+    /// this protects against is the process being killed outright, and a lesson
+    /// still sitting in memory when that happens is a lesson not learned.
+    static func recordPressure(tier: Edge0Tier, survivingAt slots: Int) {
+        let remembered = rememberedSlots(for: tier)
+        guard remembered == 0 || slots < remembered else { return }
+        store(max(floorSlots, slots), for: tier)
     }
 
     /// The tier loaded and answered at `slots` without running short.

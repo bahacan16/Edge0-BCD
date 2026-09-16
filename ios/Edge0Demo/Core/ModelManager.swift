@@ -78,12 +78,17 @@ final class ModelManager {
             // slots per layer to 4 inside ninety seconds and took the hit rate
             // to zero. So the warning is a prompt to look, and what decides is
             // the memory actually left.
+            // Read once, before anything is freed, and reported as read. The
+            // first version logged after relieving, so the line said there were
+            // 3.95 GB free at a moment the cache had just been halved *because*
+            // there were 1.5 — a log that describes the state its own decision
+            // produced is worse than no log.
             let available = ModelManager.availableProcessMemoryBytes
+            let free = ModelManager.formatBytes(available)
             guard available < ModelManager.memoryFloorBytes else {
-                Edge0Log.memory("bellek uyarısı — yer var, önbelleğe dokunulmadı")
+                Edge0Log.write("bellek uyarısı — \(free) yer var, önbelleğe dokunulmadı")
                 return
             }
-            let before = Edge0ExpertCaches.slotsPerLayer
             let slots = Edge0ExpertCaches.relieve()
             Edge0Meter.countRelief()
             // Remembered against the tier, and written through now rather than
@@ -91,10 +96,11 @@ final class ModelManager {
             // process being killed, and a lesson still in memory when that
             // happens is a lesson not learned.
             if let tier = self?.activeTier ?? self?.pendingTier {
-                Edge0MemoryPlanner.recordPressure(tier: tier, at: before)
+                Edge0MemoryPlanner.recordPressure(tier: tier, survivingAt: slots)
             }
-            Edge0Log.memory(
-                "bellek uyarısı — expert önbelleği yarıya indi (katman başına \(slots) slot)")
+            Edge0Log.write(
+                "bellek uyarısı — \(free) kalmıştı, expert önbelleği yarıya indi"
+                    + " (katman başına \(slots) slot)")
         }
 
     }
@@ -103,7 +109,12 @@ final class ModelManager {
     /// the expert caches have to give something back. Above it, it is not, and
     /// shrinking would cost a great deal of speed to solve someone else's
     /// problem.
-    nonisolated static let memoryFloorBytes: Int64 = 1_536 * 1024 * 1024
+    /// Measured: a warning at 1.65 GB left was declined as "there is room",
+    /// and the next one arrived a second later with the process about to be
+    /// killed. The spurious warnings on this device come in at 2.8 GB and
+    /// above, so two gigabytes separates the two kinds with something to
+    /// spare on the side that matters.
+    nonisolated static let memoryFloorBytes: Int64 = 2_048 * 1024 * 1024
 
     // MARK: Storage
 
