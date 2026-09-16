@@ -21,6 +21,7 @@ enum Edge0Meter {
     private static var _stageSeconds = 0.0
     private static var _prefetchSeconds = 0.0
     private static var _prefetchedRanges = 0
+    private static var _reliefs = 0
 
     /// Time the generation thread spent getting expert weights ready — the
     /// page-ins it could not avoid plus the copies out of the mapping.
@@ -44,17 +45,30 @@ enum Edge0Meter {
         }
     }
 
+    /// A memory warning arrived and the expert caches were cut back. Counted
+    /// because it changes what every later number in the run means: a hit rate
+    /// measured across one of these is not the cache's hit rate, it is the
+    /// average of before and after.
+    static func countRelief() {
+        lock.withLock { _reliefs += 1 }
+    }
+
     static func reset() {
         lock.withLock {
             _expertSeconds = 0
             _stageSeconds = 0
             _prefetchSeconds = 0
             _prefetchedRanges = 0
+            _reliefs = 0
         }
     }
 
-    static var snapshot: (expert: Double, stage: Double, prefetch: Double, ranges: Int) {
-        lock.withLock { (_expertSeconds, _stageSeconds, _prefetchSeconds, _prefetchedRanges) }
+    static var snapshot:
+        (expert: Double, stage: Double, prefetch: Double, ranges: Int, reliefs: Int)
+    {
+        lock.withLock {
+            (_expertSeconds, _stageSeconds, _prefetchSeconds, _prefetchedRanges, _reliefs)
+        }
     }
 
     /// One line saying where the time went and how well the cache did.
@@ -79,6 +93,10 @@ enum Edge0Meter {
                 format: " · isabet %%%.0f (%d/%d)",
                 Double(statistics.hits) / Double(total) * 100, statistics.hits, total)
         }
+        if meter.reliefs > 0 {
+            line += " · bellek uyarısı \(meter.reliefs)× (isabet bundan düşük)"
+        }
+        line += " · MLX tepe \(ModelManager.formatBytes(ModelManager.mlxPeakMemoryBytes))"
         return line
     }
 

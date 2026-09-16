@@ -146,7 +146,13 @@ final class AppSettings {
     static var defaultExpertCacheBudgetMB: Int {
         let available = Int(ModelManager.availableProcessMemoryBytes) / (1024 * 1024)
         guard available > 0 else { return 1024 }
-        return max(1024, min(4096, available / 2))
+        // Capped below the size that has been measured to trip a memory
+        // warning on this device class. 44 slots per layer (about 2.9 GB across
+        // forty layers) ran clean; 49 warned mid-run, and a warning costs more
+        // than the extra slots ever earned. The loader still clamps this to
+        // what is genuinely free, and the caches now halve themselves if the
+        // device disagrees anyway.
+        return max(1024, min(2816, available / 2))
     }
 
     /// Resets sampling to the selected tier's shipped defaults.

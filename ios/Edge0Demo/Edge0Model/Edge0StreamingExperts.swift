@@ -140,7 +140,10 @@ enum Edge0ExpertPaging {
 final class ExpertSlotPool {
     private let shards: SafetensorsShardSet
     private let names: ExpertTensorNames
-    private let capacity: Int
+    /// Not fixed: a cache sized from a guess about free memory has to be able
+    /// to take the answer the device gives it back.
+    private var capacity: Int
+    private let floorCapacity: Int
 
     private var cache: [Int32: ExpertSlice] = [:]
     private var recency: [Int32] = []
@@ -173,10 +176,34 @@ final class ExpertSlotPool {
         }
     }
 
+    /// Halves the cache and keeps it halved.
+    ///
+    /// This is what a memory warning gets instead of a purge. Dropping
+    /// everything hands back the most memory in the least time, which sounds
+    /// like the right trade until you watch it: three gigabytes of expert
+    /// weights go, every layer of every token misses for the rest of the run,
+    /// and the cache then grows straight back to the size that caused the
+    /// warning and trips it again. A cliff, on a loop.
+    ///
+    /// Halving keeps the experts that are actually being reused — they are the
+    /// most recent ones — and lowering the ceiling with it means the device's
+    /// answer is remembered rather than re-learned every thirty seconds. The
+    /// floor is there because a cache too small to hold one step's routing is
+    /// not a cache.
+    func relieve() {
+        lock.withLock {
+            capacity = max(floorCapacity, capacity / 2)
+            evictIfNeeded()
+        }
+    }
+
+    var currentCapacity: Int { lock.withLock { capacity } }
+
     init(shards: SafetensorsShardSet, names: ExpertTensorNames, capacity: Int) {
         self.shards = shards
         self.names = names
         self.capacity = max(1, capacity)
+        self.floorCapacity = min(max(1, capacity), 4)
     }
 
     private func read(_ tensor: String, expert: Int32) throws -> MLXArray {
@@ -217,10 +244,6 @@ final class ExpertSlotPool {
         }
     }
 
-    /// Brings every byte these experts need into memory, several at a time.
-    func warm(experts: [Int32]) {
-        Edge0ExpertPaging.fault(experts.flatMap(byteRanges(of:)))
-    }
 
     fileprivate func slice(for expert: Int32) throws -> ExpertSlice {
         if let cached = lock.withLock({ () -> ExpertSlice? in
@@ -305,6 +328,14 @@ enum Edge0ExpertCaches {
     static func purge() {
         let current = lock.withLock { layers.compactMap(\.layer) }
         for layer in current { layer.purge() }
+    }
+
+    /// Halves every layer's cache and lowers its ceiling — the response to a
+    /// memory warning. Returns the slot count each layer is left with.
+    static func relieve() -> Int {
+        let current = lock.withLock { layers.compactMap(\.layer) }
+        for layer in current { layer.relieve() }
+        return current.first?.slotCapacity ?? 0
     }
 
     /// Zeroes every layer's hit/miss counters, leaving the caches themselves
@@ -449,13 +480,20 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
         }
     }
 
-    /// Everything a miss costs: the page-ins, the copies out of the mapping,
-    /// and one materialisation for the layer.
+    /// Everything a miss costs: the copies out of the mapping and one
+    /// materialisation for the layer.
+    ///
+    /// There used to be a deliberate page-faulting pass here, touching one byte
+    /// per page across every cold expert from several threads at once, on the
+    /// theory that faulting them in parallel would beat faulting them one at a
+    /// time inside the copy. It did not. It was the only change between an
+    /// 11.9 s health check and a 27.6 s one, and the copy below has to walk the
+    /// same pages afterwards regardless — so every page was being visited
+    /// twice, the second visit no cheaper for the first, plus a
+    /// `concurrentPerform` per projection per layer per token. The mapping is
+    /// advised MADV_RANDOM, so there is no readahead for the extra pass to
+    /// trigger either; it was work for its own sake.
     private func buildSlots(for experts: [Int32]) throws -> StackedSlots {
-        // Only worth paging in once the memo has actually missed, and only the
-        // experts that are not already cached — the rest are in memory.
-        let cold = experts.filter { !pool.isCached($0) }
-        if !cold.isEmpty { pool.warm(experts: cold) }
         var slices: [ExpertSlice] = []
         slices.reserveCapacity(experts.count)
         for expert in experts {
@@ -514,6 +552,14 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
     var cacheStatistics: (hits: Int, misses: Int) { (pool.hits, pool.misses) }
 
     func resetCacheStatistics() { pool.resetStatistics() }
+
+    /// Halves the cache and lowers its ceiling. See `ExpertSlotPool.relieve`.
+    func relieve() {
+        lastSlots = nil
+        pool.relieve()
+    }
+
+    var slotCapacity: Int { pool.currentCapacity }
 }
 
 /// A module path split at its `layers.<n>.` boundary, used to match checkpoint
