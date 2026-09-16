@@ -7,110 +7,90 @@
 # iOS refuses to load unsigned or as frameworks that it accepts. Each of those
 # guessed wrong costs a build, a signing pass and an install on a real phone.
 #
-# The machine writing this code cannot reach github.com. The runner can. So the
-# runner looks and the next commit is written against what it saw.
+# The machine writing this code cannot reach github.com. The runner can.
 #
-# Never fails the job: reconnaissance that can break a working build is worse
-# than no reconnaissance.
+# Runs LAST and prints little: job logs are read from the end, and the first
+# attempt at this put its findings behind half a megabyte of Swift build
+# output where they could not be retrieved at all.
 set +e
+echo "@@@ PROBE START @@@"
 
-api() {
-  curl -sSL -H "Authorization: Bearer ${GH_TOKEN}" \
-    -H "Accept: application/vnd.github+json" "$1"
-}
+fetch() { curl -sSL --max-time 60 -H "Accept: application/vnd.github+json" "$@"; }
 
-echo "======== iOS assets, recent releases ========"
-api "https://api.github.com/repos/beeware/Python-Apple-support/releases?per_page=20" \
+fetch "https://api.github.com/repos/beeware/Python-Apple-support/releases?per_page=30" \
   > /tmp/releases.json
-python3 - <<'PY'
+echo "@@@ releases.json: $(wc -c < /tmp/releases.json) bytes"
+echo "@@@ first 300 chars:"
+head -c 300 /tmp/releases.json
+echo
+
+python3 - <<'PY' > /tmp/asset.txt
 import json
 try:
     rels = json.load(open("/tmp/releases.json"))
 except Exception as exc:
-    print("could not parse releases:", exc)
+    print("PARSE_FAIL", exc)
     raise SystemExit
 if isinstance(rels, dict):
-    print("api said:", rels.get("message"))
+    print("API_MESSAGE", rels.get("message"))
     raise SystemExit
+print("TAGS", " ".join(r["tag_name"] for r in rels[:12]))
 for rel in rels:
     for asset in rel.get("assets", []):
-        if "iOS" in asset["name"]:
-            print(f'{rel["tag_name"]:14} {asset["name"]:46} {asset["size"]/1e6:7.1f} MB')
+        print("ASSET", rel["tag_name"], asset["name"], asset["size"])
 PY
+head -40 /tmp/asset.txt
 
-echo "======== newest 3.13 iOS asset ========"
-URL=$(python3 - <<'PY'
+URL=$(python3 -c "
 import json
-try:
-    rels = json.load(open("/tmp/releases.json"))
-except Exception:
-    rels = []
-if isinstance(rels, dict):
-    rels = []
-for rel in rels:
-    if not rel["tag_name"].startswith("3.13"):
-        continue
-    for asset in rel.get("assets", []):
-        if "iOS" in asset["name"]:
-            print(asset["browser_download_url"])
-            raise SystemExit
-print("")
-PY
-)
-echo "url: ${URL:-<none>}"
-if [ -z "$URL" ]; then
-  echo "no 3.13 iOS asset; stopping here"
-  exit 0
-fi
+try: rels = json.load(open('/tmp/releases.json'))
+except Exception: rels = []
+if isinstance(rels, dict): rels = []
+best = ''
+for r in rels:
+    for a in r.get('assets', []):
+        n = a['name'].lower()
+        if 'ios' in n and n.endswith('.tar.gz'):
+            best = a['browser_download_url']
+            break
+    if best: break
+print(best)
+")
+echo "@@@ chosen url: ${URL:-<none>}"
+[ -z "$URL" ] && { echo "@@@ PROBE END (no asset) @@@"; exit 0; }
 
 rm -rf /tmp/pas && mkdir -p /tmp/pas && cd /tmp/pas || exit 0
-curl -sSL -o support.tar.gz "$URL" || exit 0
-ls -lh support.tar.gz
-tar xzf support.tar.gz || exit 0
+curl -sSL --max-time 300 -o support.tar.gz "$URL"
+echo "@@@ downloaded: $(du -h support.tar.gz | cut -f1)"
+tar xzf support.tar.gz || { echo "@@@ untar failed"; exit 0; }
 
-echo "======== top level ========"
-ls -la
-echo "======== tree (stdlib contents elided) ========"
-find . -maxdepth 4 -not -path '*/python-stdlib/*' | sort | head -100
-
-echo "======== xcframework Info.plist ========"
-for plist in $(find . -path '*xcframework/Info.plist' | head -3); do
-  echo "--- $plist ---"
-  plutil -p "$plist" 2>/dev/null | head -60
-done
-
-echo "======== headers and modulemap ========"
-find . -name '*.modulemap' | head -20
-echo "-- Python.h --"
-find . -name 'Python.h' | head -5
-echo "-- header dirs --"
-find . -type d -name 'Headers' | head -10
-
-echo "======== stdlib ========"
+echo "@@@ TOP LEVEL"
+ls -1
+echo "@@@ TREE depth 3 (stdlib elided)"
+find . -maxdepth 3 -not -path '*/python-stdlib/*' | sort | head -60
+echo "@@@ XCFRAMEWORK PLIST"
+plutil -p "$(find . -path '*xcframework/Info.plist' | head -1)" 2>/dev/null | head -40
+echo "@@@ MODULEMAPS"
+find . -name '*.modulemap' | head -10
+echo "@@@ Python.h"
+find . -name 'Python.h' | head -3
+echo "@@@ Headers dirs"
+find . -type d -name 'Headers' | head -6
+echo "@@@ STDLIB"
 STD=$(find . -maxdepth 4 -type d -name 'python-stdlib' | head -1)
-echo "stdlib dir: ${STD:-<none>}"
-if [ -n "$STD" ]; then
-  du -sh "$STD"
-  ls "$STD" | head -40
-fi
-
-echo "======== binary modules ========"
-find . -type d -name 'lib-dynload' | head
-echo "-- .so count --"
-find . -path '*lib-dynload*' -name '*.so' | wc -l
-find . -path '*lib-dynload*' -name '*.so' | head -30
-echo "-- .framework under lib-dynload --"
-find . -path '*lib-dynload*' -name '*.framework' | head -30
-
-echo "======== modules that decide the design ========"
-for module in zlib binascii _struct array math _datetime _decimal _socket _ssl _hashlib; do
-  hit=$(find . \( -name "${module}.*.so" -o -name "${module}.so" -o -name "${module}.framework" \) | head -1)
-  printf '%-12s %s\n' "$module" "${hit:-<not a separate file: builtin or absent>}"
+echo "dir=$STD  size=$([ -n "$STD" ] && du -sh "$STD" | cut -f1)"
+[ -n "$STD" ] && ls -1 "$STD" | head -25
+echo "@@@ LIB-DYNLOAD"
+find . -type d -name 'lib-dynload' | head -3
+echo "so=$(find . -path '*lib-dynload*' -name '*.so' | wc -l | tr -d ' ')  fw=$(find . -path '*lib-dynload*' -name '*.framework' | wc -l | tr -d ' ')"
+find . -path '*lib-dynload*' \( -name '*.so' -o -name '*.framework' \) | head -25
+echo "@@@ KEY MODULES"
+for m in zlib binascii _struct array math _datetime _decimal _socket _ssl; do
+  h=$(find . \( -name "${m}.*.so" -o -name "${m}.so" -o -name "${m}.framework" \) | head -1)
+  printf '%-10s %s\n' "$m" "${h:-BUILTIN_OR_ABSENT}"
 done
-
-echo "======== pip / ensurepip ========"
-find . -maxdepth 8 -type d \( -name 'ensurepip' -o -name 'pip' -o -name 'site-packages' \) | head
-
-echo "======== unpacked size ========"
-du -sh .
+echo "@@@ PIP"
+find . -maxdepth 8 -type d \( -name ensurepip -o -name pip -o -name site-packages \) | head -6
+echo "@@@ TOTAL $(du -sh . | cut -f1)"
+echo "@@@ PROBE END @@@"
 exit 0

@@ -17,14 +17,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # One cheap reconnaissance run before any of this is built against, and
-      # it cannot fail the job. See the script for why.
-      - name: Probe Python-Apple-support layout
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash ios/Tools/probe-python-support.sh
-
       - name: Select latest available Xcode
         run: |
           LATEST_XCODE=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
@@ -127,3 +119,11 @@ jobs:
           name: Edge0Demo-unsigned-ipa
           path: ios/Edge0Demo-unsigned.ipa
           retention-days: 14
+
+      # Last on purpose: job logs are read from the end, and this behind the
+      # Swift build output could not be retrieved at all. It cannot fail the
+      # job either — reconnaissance that breaks a working build is worse than
+      # no reconnaissance.
+      - name: Probe Python-Apple-support layout
+        continue-on-error: true
+        run: bash ios/Tools/probe-python-support.sh
