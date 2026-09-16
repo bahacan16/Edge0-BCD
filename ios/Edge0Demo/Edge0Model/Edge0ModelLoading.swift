@@ -147,9 +147,14 @@ enum Edge0Storage {
 /// the app's own cache directory rather than the macro's default.
 struct Edge0Downloader: Downloader {
     private let client: HubClient
+    private let onRetry: @Sendable (Int, Int, Error) -> Void
 
-    init() {
+    /// Attempts in total, not retries after the first.
+    private static let attempts = 5
+
+    init(onRetry: @escaping @Sendable (Int, Int, Error) -> Void = { _, _, _ in }) {
         client = HubClient(cache: Edge0Storage.hubCache)
+        self.onRetry = onRetry
     }
 
     func download(
@@ -162,12 +167,35 @@ struct Edge0Downloader: Downloader {
         guard let repo = Repo.ID(rawValue: id) else {
             throw Edge0LoadError.invalidRepositoryID(id)
         }
-        return try await client.downloadSnapshot(
-            of: repo,
-            revision: revision ?? "main",
-            matching: patterns,
-            progressHandler: { @MainActor progress in progressHandler(progress) }
-        )
+
+        // A 23 GB download over a phone's connection will be interrupted; on a
+        // long enough transfer that is a certainty, not an edge case. Hugging
+        // Face downloads here resume from the partial blob, so a retry picks up
+        // where the last attempt stopped rather than starting over — which
+        // makes giving up on the first dropped connection simply wrong.
+        var lastError: Error?
+        for attempt in 1 ... Self.attempts {
+            do {
+                return try await client.downloadSnapshot(
+                    of: repo,
+                    revision: revision ?? "main",
+                    matching: patterns,
+                    progressHandler: { @MainActor progress in progressHandler(progress) }
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // The user asking to stop must not look like a network failure.
+                try Task.checkCancellation()
+                lastError = error
+                guard attempt < Self.attempts else { break }
+                onRetry(attempt, Self.attempts, error)
+                // 2s, 4s, 8s, 16s: long enough to outlast a handover between
+                // cells or a Wi-Fi reconnect.
+                try await Task.sleep(for: .seconds(pow(2.0, Double(attempt))))
+            }
+        }
+        throw lastError ?? Edge0LoadError.invalidRepositoryID(id)
     }
 }
 
@@ -213,7 +241,8 @@ enum Edge0Loader {
         gpuCacheLimitMB: Int,
         expertCacheBudgetMB: Int,
         streamExperts: Bool,
-        onProgress: @escaping @Sendable (Progress) -> Void
+        onProgress: @escaping @Sendable (Progress) -> Void,
+        onRetry: @escaping @Sendable (Int, Int, Error) -> Void = { _, _, _ in }
     ) async throws -> Edge0LoadedModel {
         await registerModelTypes()
 
@@ -229,8 +258,8 @@ enum Edge0Loader {
             let configuration = ModelConfiguration(
                 id: tier.repoId, eosTokenIds: tier.eosTokenIds)
             let resolved = try await resolve(
-                configuration: configuration, from: Edge0Downloader(), useLatest: false,
-                progressHandler: onProgress)
+                configuration: configuration, from: Edge0Downloader(onRetry: onRetry),
+                useLatest: false, progressHandler: onProgress)
             directory = resolved.modelDirectory
         }
 

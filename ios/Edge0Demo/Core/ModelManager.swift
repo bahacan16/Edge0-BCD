@@ -147,6 +147,12 @@ final class ModelManager {
                             guard self?.loadGeneration == generation else { return }
                             self?.report(progress)
                         }
+                    },
+                    onRetry: { attempt, total, error in
+                        Task { @MainActor [weak self] in
+                            guard self?.loadGeneration == generation else { return }
+                            self?.reportRetry(attempt: attempt, of: total, error: error)
+                        }
                     }
                 )
                 guard let self, !Task.isCancelled, self.loadGeneration == generation else {
@@ -221,19 +227,13 @@ final class ModelManager {
 
     private func reportCopy(copied: Int64, total: Int64) {
         guard total > 0 else { return }
-        var parts = ["\(Self.formatBytes(copied)) / \(Self.formatBytes(total))"]
-        if let rate = updateRate(completed: copied), rate > 0 {
-            parts.append("\(Self.formatBytes(Int64(rate)))/sn")
-            let remaining = Double(total - copied) / rate
-            if remaining.isFinite, remaining > 0 {
-                parts.append("~\(Self.formatDuration(remaining))")
-            }
-        }
         let fraction = Double(copied) / Double(total)
         phase =
             fraction >= 1.0
             ? .preparing("Ağırlıklar yükleniyor…")
-            : .downloading(fraction: fraction, detail: parts.joined(separator: " · "))
+            : .downloading(
+                fraction: fraction,
+                detail: describeTransfer(completed: copied, total: total))
     }
 
     func cancelLoad() {
@@ -290,25 +290,19 @@ final class ModelManager {
     private func report(_ progress: Progress) {
         let fraction = progress.fractionCompleted
         let total = progress.totalUnitCount
-        let completed = progress.completedUnitCount
         let detail: String
 
         if total > 0, total < 200 {
             // Small unit counts mean the downloader is counting files.
-            detail = "Dosya \(completed + 1)/\(total)"
+            detail = "Dosya \(progress.completedUnitCount + 1)/\(total)"
         } else if total > 0 {
-            var parts = ["\(Self.formatBytes(completed)) / \(Self.formatBytes(total))"]
-            if let rate = updateRate(completed: completed), rate > 0 {
-                parts.append("\(Self.formatBytes(Int64(rate)))/sn")
-                // The 35B checkpoint is a multi-hour download on most
-                // connections; a bare percentage says nothing about whether
-                // to wait for it or go to bed.
-                let remaining = Double(total - completed) / rate
-                if remaining.isFinite, remaining > 0 {
-                    parts.append("~\(Self.formatDuration(remaining))")
-                }
-            }
-            detail = parts.joined(separator: " · ")
+            // NOT `completedUnitCount`: a Progress with children only advances
+            // that when a whole child finishes, so on a multi-gigabyte shard it
+            // sits still for minutes while `fractionCompleted` keeps moving.
+            // Reading bytes off the frozen counter made a working download
+            // report 0 MB/s and an ETA of hundreds of hours.
+            let completed = Int64(fraction * Double(total))
+            detail = describeTransfer(completed: completed, total: total)
         } else {
             detail = "İndiriliyor…"
         }
@@ -318,6 +312,35 @@ final class ModelManager {
         } else {
             phase = .downloading(fraction: fraction, detail: detail)
         }
+    }
+
+    /// A dropped connection on a multi-hour download is normal and recoverable,
+    /// so it is reported as what it is rather than left looking like a stall.
+    private func reportRetry(attempt: Int, of total: Int, error: Error) {
+        guard case .downloading(let fraction, _) = phase else { return }
+        // The transfer restarts from the partial file, so the rate baseline
+        // from before the drop would produce nonsense.
+        lastProgressSample = nil
+        smoothedBytesPerSecond = 0
+        phase = .downloading(
+            fraction: fraction,
+            detail: "Bağlantı koptu — yeniden deneniyor (\(attempt)/\(total - 1))…")
+    }
+
+    /// "3,2 GB / 23 GB · 11 MB/sn · ~34 dk", with the rate and estimate left
+    /// off until they mean something.
+    private func describeTransfer(completed: Int64, total: Int64) -> String {
+        var parts = ["\(Self.formatBytes(completed)) / \(Self.formatBytes(total))"]
+        guard let rate = updateRate(completed: completed), rate > 1024 else {
+            return parts.joined(separator: " · ")
+        }
+        parts.append("\(Self.formatBytes(Int64(rate)))/sn")
+        let remaining = Double(total - completed) / rate
+        // A wild estimate is worse than none: it reads as "this is broken".
+        if remaining.isFinite, remaining > 0, remaining < 24 * 3600 {
+            parts.append("~\(Self.formatDuration(remaining))")
+        }
+        return parts.joined(separator: " · ")
     }
 
     /// Exponentially smoothed download rate in bytes per second. Raw samples
