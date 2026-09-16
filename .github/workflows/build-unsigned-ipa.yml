@@ -126,4 +126,9 @@ jobs:
       # no reconnaissance.
       - name: Probe Python-Apple-support layout
         continue-on-error: true
+        env:
+          # Unauthenticated, the runner's shared egress IP is already over
+          # GitHub's anonymous API limit — the first attempt came back
+          # "rate limit exceeded" and looked exactly like "no releases found".
+          GH_TOKEN: ${{ github.token }}
         run: bash ios/Tools/probe-python-support.sh

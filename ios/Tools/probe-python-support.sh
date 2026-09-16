@@ -15,9 +15,15 @@
 set +e
 echo "@@@ PROBE START @@@"
 
-fetch() { curl -sSL --max-time 60 -H "Accept: application/vnd.github+json" "$@"; }
+# Authenticated: the runner's shared egress IP sits permanently over GitHub's
+# anonymous API limit, and a rate-limit body parses as "no releases" — which is
+# indistinguishable from the package having moved.
+AUTH=()
+[ -n "${GH_TOKEN:-}" ] && AUTH=(-H "Authorization: Bearer ${GH_TOKEN}")
+echo "@@@ token present: $([ -n "${GH_TOKEN:-}" ] && echo yes || echo NO)"
 
-fetch "https://api.github.com/repos/beeware/Python-Apple-support/releases?per_page=30" \
+curl -sSL --max-time 60 -H "Accept: application/vnd.github+json" "${AUTH[@]}" \
+  "https://api.github.com/repos/beeware/Python-Apple-support/releases?per_page=30" \
   > /tmp/releases.json
 echo "@@@ releases.json: $(wc -c < /tmp/releases.json) bytes"
 echo "@@@ first 300 chars:"
