@@ -439,9 +439,18 @@ enum Edge0Loader {
 
         // One token through the model: a shape or dtype slip in the port shows
         // up here as NaN logits instead of as gibberish an hour later.
+        let healthStarted = Date.timeIntervalSinceReferenceDate
         let health = await container.perform { context in
             Edge0ModelHealth.check(model: context.model, tokenizer: context.tokenizer)
         }
+        // Timed, because it is the one fixed workload this app runs: the same
+        // prompt, the same twelve greedy tokens, every load. That makes it the
+        // only number two builds can be compared on without also comparing two
+        // different conversations.
+        Edge0Log.write(
+            String(
+                format: "sağlık denemesi: %.1f sn (aynı istem, 12 token)",
+                Date.timeIntervalSinceReferenceDate - healthStarted))
         guard health.passed else { throw Edge0HealthError.failed(health.detail) }
 
         return Edge0LoadedModel(

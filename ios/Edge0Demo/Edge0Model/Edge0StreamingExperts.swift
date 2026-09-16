@@ -154,6 +154,16 @@ final class ExpertSlotPool {
     var hits: Int { lock.withLock { _hits } }
     var misses: Int { lock.withLock { _misses } }
 
+    /// Zeroes the counters without touching the cache itself, so one answer's
+    /// hit rate can be read on its own rather than blended with every answer
+    /// before it.
+    func resetStatistics() {
+        lock.withLock {
+            _hits = 0
+            _misses = 0
+        }
+    }
+
     /// Drops every cached expert. The next step pages them back in from the
     /// mapping, which is slow but always correct.
     func purge() {
@@ -297,6 +307,13 @@ enum Edge0ExpertCaches {
         for layer in current { layer.purge() }
     }
 
+    /// Zeroes every layer's hit/miss counters, leaving the caches themselves
+    /// alone.
+    static func resetStatistics() {
+        let current = lock.withLock { layers.compactMap(\.layer) }
+        for layer in current { layer.resetCacheStatistics() }
+    }
+
     /// Aggregate hit/miss counts across every streaming layer.
     static var statistics: (hits: Int, misses: Int) {
         let current = lock.withLock { layers.compactMap(\.layer) }
@@ -427,6 +444,14 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
         if let cached = lastSlots, cached.key == experts {
             return cached.slots
         }
+        return try Edge0Meter.measure(Edge0Meter.addExpertTime) {
+            try buildSlots(for: experts)
+        }
+    }
+
+    /// Everything a miss costs: the page-ins, the copies out of the mapping,
+    /// and one materialisation for the layer.
+    private func buildSlots(for experts: [Int32]) throws -> StackedSlots {
         // Only worth paging in once the memo has actually missed, and only the
         // experts that are not already cached — the rest are in memory.
         let cold = experts.filter { !pool.isCached($0) }
@@ -487,6 +512,8 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
     }
 
     var cacheStatistics: (hits: Int, misses: Int) { (pool.hits, pool.misses) }
+
+    func resetCacheStatistics() { pool.resetStatistics() }
 }
 
 /// A module path split at its `layers.<n>.` boundary, used to match checkpoint

@@ -110,10 +110,14 @@ enum Edge0StreamingLoader {
         //    The prerouter's heads land in memory after this, so the space they
         //    will take has to be kept out of the expert cache's share now —
         //    sizing the cache against memory the prerouter is about to claim is
-        //    how a load that fits becomes a load that gets the app killed. The
-        //    file is read once into per-head copies and once more as the stacks
-        //    built from them, hence twice its size.
-        let prerouterBytes = prerouterURL.map { 2 * fileSize(of: $0) } ?? 0
+        //    how a load that fits becomes a load that gets the app killed.
+        //
+        //    Its resident size, once: installing it does briefly hold the file
+        //    twice (per-head copies, then the stacks built from them), but that
+        //    happens moments from here with the expert cache still empty, so
+        //    reserving for the peak would take slots away for memory nothing
+        //    holds by the time the cache is big enough to care.
+        let prerouterBytes = prerouterURL.map(fileSize(of:)) ?? 0
         let installed = installStreamingExperts(
             in: model, shards: shards, budgetBytes: expertCacheBudgetBytes,
             reservedBytes: 1_536 * 1024 * 1024 + prerouterBytes,
@@ -216,11 +220,18 @@ enum Edge0StreamingLoader {
         let effective = min(budgetBytes, affordable)
         let slots = min(96, max(2, effective / max(1, blocks.count * perExpert)))
 
+        // Which of the two limits actually bound the cache, spelled out. The
+        // setting is a number chosen once, at first launch, from whatever the
+        // device happened to have free at that moment; reinstall the app on a
+        // busier day and it silently comes back smaller. That is worth being
+        // able to read off the log rather than infer from a slot count.
+        let bound = budgetBytes <= affordable ? "ayar" : "bellek"
         Edge0Log.write(
             "expert önbelleği: istenen \(budgetBytes / 1_048_576) MB,"
                 + " kullanılabilir \(affordable / 1_048_576) MB,"
                 + " expert başına \(perExpert / 1024) KB,"
-                + " katman başına \(slots) slot (\(blocks.count) katman)")
+                + " katman başına \(slots) slot (\(blocks.count) katman)"
+                + " — sınırlayan: \(bound)")
 
         for (block, names) in blocks {
             let streaming = Edge0StreamingSwitchGLU(

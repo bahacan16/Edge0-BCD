@@ -86,7 +86,12 @@ final class ChatViewModel {
         // would be written into someone else's transcript.
         let target = messages[messages.count - 1].id
         let conversation = conversationID
+        // Per turn, not per session: cumulative counters mix the load-time
+        // health check and every previous answer into one figure, which is
+        // exactly the figure you cannot compare between two settings.
         MLX.GPU.resetPeakMemory()
+        Edge0Meter.reset()
+        Edge0ExpertCaches.resetStatistics()
 
         generationTask = Task { [weak self] in
             guard let self else { return }
@@ -264,6 +269,17 @@ final class ChatViewModel {
             }
         }
         Edge0Log.write(line)
+
+        // The breakdown, because tokens per second moves for several reasons at
+        // once and this is the only way to tell which one moved.
+        let meter = Edge0Meter.snapshot
+        Edge0Log.write(
+            String(
+                format:
+                    "zaman: expert okuma %.2f sn · prerouter başları %.2f sn"
+                    + " · önden okuma %.2f sn (%d aralık) · prerouter %@",
+                meter.expert, meter.stage, meter.prefetch, meter.ranges,
+                settings.usePrerouter ? "açık" : "kapalı"))
     }
 
     /// Position of the message being streamed into, or nil if the transcript

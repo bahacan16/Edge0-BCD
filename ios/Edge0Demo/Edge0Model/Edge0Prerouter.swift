@@ -90,8 +90,17 @@ final class Edge0Prerouter {
 
     /// Serial on purpose: one step's prefetch should finish before the next
     /// one's is issued, and the fan-out happens inside each job anyway.
+    ///
+    /// Deliberately BELOW the generation thread's priority. Every page-in is a
+    /// separate small read — the mapping is advised MADV_RANDOM, so the kernel
+    /// does one page per fault and no readahead — and there are only so many
+    /// threads to make them on. A prefetch running at the same priority as the
+    /// forward is not just working alongside it, it is bidding for the same
+    /// threads with reads the model does not need for another thirty layers,
+    /// and the layer that needs its experts *now* waits behind them. Speculative
+    /// work must lose that race, always.
     private let prefetchQueue = DispatchQueue(
-        label: "ai.edge0.prerouter.prefetch", qos: .userInitiated)
+        label: "ai.edge0.prerouter.prefetch", qos: .utility)
 
     private var _steps = 0
     private let counterLock = NSLock()
@@ -274,6 +283,10 @@ final class Edge0Prerouter {
     /// forces them, and the expert indices have to reach the CPU before the
     /// page-ins can be issued.
     func stageAll(logits: MLXArray) {
+        Edge0Meter.measure(Edge0Meter.addStageTime) { stage(logits: logits) }
+    }
+
+    private func stage(logits: MLXArray) {
         defer { advance() }
 
         var inputs: [MLXArray] = []
@@ -327,7 +340,12 @@ final class Edge0Prerouter {
         // hundred-odd independent requests to work on while the current step
         // finishes, instead of four at a time forty times in a row.
         guard !ranges.isEmpty else { return }
-        prefetchQueue.async { Edge0ExpertPaging.fault(ranges) }
+        prefetchQueue.async {
+            let start = CFAbsoluteTimeGetCurrent()
+            Edge0ExpertPaging.fault(ranges)
+            Edge0Meter.addPrefetch(
+                seconds: CFAbsoluteTimeGetCurrent() - start, ranges: ranges.count)
+        }
     }
 
     /// Rolls this step's one-hots into the "previous token" feature.

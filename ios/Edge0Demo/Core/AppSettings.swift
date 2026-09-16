@@ -141,7 +141,7 @@ final class AppSettings {
     static var defaultExpertCacheBudgetMB: Int {
         let available = Int(ModelManager.availableProcessMemoryBytes) / (1024 * 1024)
         guard available > 0 else { return 1024 }
-        return max(512, min(3072, available / 3))
+        return max(1024, min(4096, available / 2))
     }
 
     /// Resets sampling to the selected tier's shipped defaults.
