@@ -140,8 +140,10 @@ enum Edge0ExpertPaging {
 final class ExpertSlotPool {
     private let shards: SafetensorsShardSet
     private let names: ExpertTensorNames
-    /// Not fixed: a cache sized from a guess about free memory has to be able
-    /// to take the answer the device gives it back.
+    /// What the loader sized this cache at, and what it is allowed to grow
+    /// back to. A cut made under memory pressure is temporary by construction:
+    /// the pressure that caused it usually was.
+    private let configuredCapacity: Int
     private var capacity: Int
     private let floorCapacity: Int
 
@@ -176,20 +178,19 @@ final class ExpertSlotPool {
         }
     }
 
-    /// Halves the cache and keeps it halved.
+    /// Halves the cache, for as long as the pressure that prompted it lasts.
     ///
-    /// This is what a memory warning gets instead of a purge. Dropping
-    /// everything hands back the most memory in the least time, which sounds
-    /// like the right trade until you watch it: three gigabytes of expert
-    /// weights go, every layer of every token misses for the rest of the run,
-    /// and the cache then grows straight back to the size that caused the
-    /// warning and trips it again. A cliff, on a loop.
+    /// Halving rather than emptying keeps the experts actually being reused —
+    /// they are the most recent ones — instead of making the rest of the run
+    /// miss on everything.
     ///
-    /// Halving keeps the experts that are actually being reused — they are the
-    /// most recent ones — and lowering the ceiling with it means the device's
-    /// answer is remembered rather than re-learned every thirty seconds. The
-    /// floor is there because a cache too small to hold one step's routing is
-    /// not a cache.
+    /// The half that matters more is `restore`. Lowering the ceiling and
+    /// leaving it lowered turns a cache into a ratchet, and on this device that
+    /// is not a theoretical risk: warnings arrive with four gigabytes free,
+    /// because they are the system's pressure and not necessarily this app's.
+    /// Answering each one by halving took 41 slots to 4 in ninety seconds and
+    /// the hit rate to zero, which is slower than having no cache at all, since
+    /// a cache that never hits still costs every copy it makes.
     func relieve() {
         lock.withLock {
             capacity = max(floorCapacity, capacity / 2)
@@ -197,11 +198,17 @@ final class ExpertSlotPool {
         }
     }
 
+    /// Puts the ceiling back to what the loader chose.
+    func restore() {
+        lock.withLock { capacity = configuredCapacity }
+    }
+
     var currentCapacity: Int { lock.withLock { capacity } }
 
     init(shards: SafetensorsShardSet, names: ExpertTensorNames, capacity: Int) {
         self.shards = shards
         self.names = names
+        self.configuredCapacity = max(1, capacity)
         self.capacity = max(1, capacity)
         self.floorCapacity = min(max(1, capacity), 4)
     }
@@ -330,12 +337,26 @@ enum Edge0ExpertCaches {
         for layer in current { layer.purge() }
     }
 
-    /// Halves every layer's cache and lowers its ceiling — the response to a
-    /// memory warning. Returns the slot count each layer is left with.
+    /// Halves every layer's cache — the response to real memory pressure.
+    /// Returns the slot count each layer is left with.
     static func relieve() -> Int {
         let current = lock.withLock { layers.compactMap(\.layer) }
         for layer in current { layer.relieve() }
         return current.first?.slotCapacity ?? 0
+    }
+
+    /// Puts every layer's ceiling back to what the loader chose. Called at the
+    /// start of a run, so a cut made under pressure lasts as long as the
+    /// pressure and no longer.
+    static func restoreCapacity() {
+        let current = lock.withLock { layers.compactMap(\.layer) }
+        for layer in current { layer.restore() }
+    }
+
+    /// Slots per layer right now, which is not the configured number if a
+    /// warning has cut it back.
+    static var slotsPerLayer: Int {
+        lock.withLock { layers.compactMap(\.layer) }.first?.slotCapacity ?? 0
     }
 
     /// Zeroes every layer's hit/miss counters, leaving the caches themselves
@@ -553,11 +574,13 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
 
     func resetCacheStatistics() { pool.resetStatistics() }
 
-    /// Halves the cache and lowers its ceiling. See `ExpertSlotPool.relieve`.
+    /// Halves the cache. See `ExpertSlotPool.relieve`.
     func relieve() {
         lastSlots = nil
         pool.relieve()
     }
+
+    func restore() { pool.restore() }
 
     var slotCapacity: Int { pool.currentCapacity }
 }

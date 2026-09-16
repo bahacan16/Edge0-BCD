@@ -67,19 +67,35 @@ final class ModelManager {
             forName: UIApplication.didReceiveMemoryWarningNotification,
             object: nil, queue: .main
         ) { _ in
+            // Always cheap and always safe: MLX's own buffer cache is pure
+            // slack and giving it back costs nothing but a few reallocations.
             MLX.GPU.clearCache()
-            // Halved, not emptied. The old behaviour handed back every cached
-            // expert, which is the most memory in the least time and also the
-            // worst possible trade: the rest of the run misses on every layer
-            // of every token, and the cache grows straight back to the size
-            // that caused the warning. Keeping the recent half and lowering
-            // the ceiling means the device's answer is remembered.
+
+            // The expert caches are another matter, and most warnings do not
+            // justify touching them. On this device they arrive with four
+            // gigabytes free — that is the system under pressure, not this
+            // process — and treating each one as a reason to shrink cut 41
+            // slots per layer to 4 inside ninety seconds and took the hit rate
+            // to zero. So the warning is a prompt to look, and what decides is
+            // the memory actually left.
+            let available = ModelManager.availableProcessMemoryBytes
+            guard available < ModelManager.memoryFloorBytes else {
+                Edge0Log.memory("bellek uyarısı — yer var, önbelleğe dokunulmadı")
+                return
+            }
             let slots = Edge0ExpertCaches.relieve()
             Edge0Meter.countRelief()
             Edge0Log.memory(
                 "bellek uyarısı — expert önbelleği yarıya indi (katman başına \(slots) slot)")
         }
+
     }
+
+    /// Below this much left to the process, a memory warning is about us and
+    /// the expert caches have to give something back. Above it, it is not, and
+    /// shrinking would cost a great deal of speed to solve someone else's
+    /// problem.
+    nonisolated static let memoryFloorBytes: Int64 = 1_536 * 1024 * 1024
 
     // MARK: Storage
 
@@ -435,7 +451,9 @@ final class ModelManager {
     /// it. This is the number that decides whether a tier fits, not the
     /// device's RAM: an app gets a fraction of the latter, and how big a
     /// fraction depends on entitlements and on what else the phone is doing.
-    static var availableProcessMemoryBytes: Int64 { Int64(os_proc_available_memory()) }
+    nonisolated static var availableProcessMemoryBytes: Int64 {
+        Int64(os_proc_available_memory())
+    }
 
     // Reads of MLX's own counters, with no actor state behind them — and the
     // run report that wants them is written off the main actor.

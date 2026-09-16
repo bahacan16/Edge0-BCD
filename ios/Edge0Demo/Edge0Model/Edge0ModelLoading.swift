@@ -441,6 +441,7 @@ enum Edge0Loader {
         // up here as NaN logits instead of as gibberish an hour later.
         Edge0Meter.reset()
         Edge0ExpertCaches.resetStatistics()
+        Edge0ExpertCaches.restoreCapacity()
         let healthStarted = Date.timeIntervalSinceReferenceDate
         let health = await container.perform { context in
             Edge0ModelHealth.check(model: context.model, tokenizer: context.tokenizer)

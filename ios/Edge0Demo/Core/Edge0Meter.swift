@@ -93,6 +93,7 @@ enum Edge0Meter {
                 format: " · isabet %%%.0f (%d/%d)",
                 Double(statistics.hits) / Double(total) * 100, statistics.hits, total)
         }
+        line += " · slot \(Edge0ExpertCaches.slotsPerLayer)"
         if meter.reliefs > 0 {
             line += " · bellek uyarısı \(meter.reliefs)× (isabet bundan düşük)"
         }

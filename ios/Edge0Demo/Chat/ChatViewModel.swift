@@ -92,6 +92,9 @@ final class ChatViewModel {
         MLX.GPU.resetPeakMemory()
         Edge0Meter.reset()
         Edge0ExpertCaches.resetStatistics()
+        // A cut made under memory pressure lasts as long as the pressure, not
+        // for the rest of the session.
+        Edge0ExpertCaches.restoreCapacity()
 
         generationTask = Task { [weak self] in
             guard let self else { return }
