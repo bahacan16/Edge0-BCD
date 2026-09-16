@@ -46,6 +46,27 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
         }
     }
 
+    /// edge0's trained prerouter adapter, where this app can use one.
+    ///
+    /// Both tiers ship one, but the 8B tier's heads are consumed inside Ling's
+    /// own MoE block (sigmoid group-limited selection, features read from the
+    /// model's caches) rather than replacing the routing from outside, and that
+    /// path is not ported. Returning nil is what keeps the 8B tier on its gate
+    /// instead of loading heads nothing would consume.
+    var prerouterFileName: String? {
+        switch self {
+        case .edge0_8b: nil
+        case .edge0_35b: "prerouter_edge0_35b.safetensors"
+        }
+    }
+
+    /// First layer that routes from a prediction. The layer below it owns the
+    /// first head. Both numbers come from the tier's `PrerouterSpec`.
+    var prerouterStartLayer: Int { 7 }
+
+    /// Hidden width of one prerouter head (512 for both shipped tiers).
+    var prerouterHiddenSize: Int { 512 }
+
     /// Approximate on-disk size of the 4-bit checkpoint (README "Requirements").
     var downloadSizeGB: Double {
         switch self {

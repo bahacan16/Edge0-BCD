@@ -156,6 +156,19 @@ struct SettingsView: View {
             StepperRow(
                 title: "Expert önbelleği", value: settings.expertCacheBudgetMB,
                 range: 256...4096, step: 256, unit: "MB")
+            let prerouterTier = models.activeTier ?? settings.wrappedValue.selectedTier
+            Toggle("Prerouter (bir adım önden okuma)", isOn: settings.usePrerouter)
+                .disabled(prerouterTier.prerouterFileName == nil)
+            Text(
+                prerouterTier.prerouterFileName == nil
+                    ? "Bu katman için prerouter portu yok; kapılarla çalışır."
+                    : "Her katman bir sonrakinin yönlendirmesini bir token önceden"
+                        + " tahmin eder, böylece bir adımın bütün expert'leri"
+                        + " diskten aynı anda okunur. Recover-LoRA da bu kurulum"
+                        + " için eğitildi. Değişiklik bir sonraki yüklemede geçerli olur."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
             LabeledContent("MLX aktif bellek") {
                 Text(ModelManager.formatBytes(ModelManager.mlxActiveMemoryBytes))
                     .monospacedDigit()
@@ -290,6 +303,7 @@ struct SettingsView: View {
         lines.append("LoRA açık: \(settings.useLoRA)")
         lines.append("Expert akışı: \(settings.expertStreaming)")
         lines.append("Expert önbelleği: \(settings.expertCacheBudgetMB) MB")
+        lines.append("Prerouter: \(settings.usePrerouter)")
         lines.append("MLX önbellek sınırı: \(settings.gpuCacheLimitMB) MB")
         lines.append(
             "Üretim: T=\(settings.temperature) topP=\(settings.topP)"

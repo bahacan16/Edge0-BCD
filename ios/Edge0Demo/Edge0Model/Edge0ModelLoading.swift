@@ -362,6 +362,7 @@ enum Edge0Loader {
         gpuCacheLimitMB: Int,
         expertCacheBudgetMB: Int,
         streamExperts: Bool,
+        usePrerouter: Bool,
         onProgress: @escaping @Sendable (Progress) -> Void,
         onRetry: @escaping @Sendable (Int, Int, Error) -> Void = { _, _, _ in }
     ) async throws -> Edge0LoadedModel {
@@ -389,6 +390,7 @@ enum Edge0Loader {
         Edge0Log.memory("dizin çözümlendi")
 
         let loraURL = directory.appendingPathComponent(tier.loraFileName)
+        let prerouterURL = tier.prerouterFileName.map(directory.appendingPathComponent)
         let container: ModelContainer
         var report: Edge0LoRAReport?
 
@@ -400,7 +402,8 @@ enum Edge0Loader {
                 directory: directory,
                 tokenizerLoader: Edge0TokenizerLoader(),
                 expertCacheBudgetBytes: expertCacheBudgetMB * 1024 * 1024,
-                loraURL: applyLoRA ? loraURL : nil
+                loraURL: applyLoRA ? loraURL : nil,
+                prerouterURL: usePrerouter ? prerouterURL : nil
             )
             container = ModelContainer(context: loaded.context)
             report = loaded.loraReport

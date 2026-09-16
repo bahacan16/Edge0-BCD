@@ -55,11 +55,12 @@ enum Edge0ImportError: LocalizedError {
 enum Edge0Importer {
     /// Files the loaders actually read.
     ///
-    /// `prerouter_*` is deliberately left out: this app does not implement
-    /// edge0's prerouter (it is a streaming prefetch optimisation, a no-op on
-    /// the routing itself), and the file is hundreds of megabytes.
+    /// `prerouter_*` used to be skipped here, from back when this app had no
+    /// prerouter to feed it. It does now, and on the streaming tier that file
+    /// is what decides decode speed, so leaving it out is not saving 138 MB —
+    /// it is throwing away the reason the tier is usable at all.
     static func shouldImport(_ name: String) -> Bool {
-        guard !name.hasPrefix("."), !name.hasPrefix("prerouter_") else { return false }
+        guard !name.hasPrefix(".") else { return false }
         return name.hasSuffix(".safetensors") || name.hasSuffix(".json")
             || name.hasSuffix(".jinja") || name.hasSuffix(".model") || name.hasSuffix(".txt")
     }

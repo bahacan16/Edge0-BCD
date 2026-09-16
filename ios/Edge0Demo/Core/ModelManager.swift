@@ -125,6 +125,7 @@ final class ModelManager {
         Edge0Log.write(
             "hazırlanıyor: \(tier.rawValue) · LoRA \(settings.useLoRA)"
                 + " · akış \(settings.expertStreaming)"
+                + " · prerouter \(settings.usePrerouter)"
                 + " · önbellek \(settings.expertCacheBudgetMB) MB")
         Edge0Log.memory("yükleme öncesi")
         phase = .downloading(fraction: 0, detail: "Bağlanılıyor…")
@@ -151,6 +152,7 @@ final class ModelManager {
                     gpuCacheLimitMB: settings.gpuCacheLimitMB,
                     expertCacheBudgetMB: settings.expertCacheBudgetMB,
                     streamExperts: settings.expertStreaming,
+                    usePrerouter: settings.usePrerouter,
                     onProgress: { progress in
                         Task { @MainActor [weak self] in
                             guard self?.loadGeneration == generation else { return }

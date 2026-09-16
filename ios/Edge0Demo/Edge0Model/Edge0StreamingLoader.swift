@@ -46,7 +46,8 @@ enum Edge0StreamingLoader {
         directory: URL,
         tokenizerLoader: any TokenizerLoader,
         expertCacheBudgetBytes: Int,
-        loraURL: URL?
+        loraURL: URL?,
+        prerouterURL: URL?
     ) async throws -> (context: ModelContext, loraReport: Edge0LoRAReport?) {
         let configURL = directory.appending(component: "config.json")
         let configData = try Data(contentsOf: configURL)
@@ -105,8 +106,17 @@ enum Edge0StreamingLoader {
         weights.removeAll()
 
         // 3. Route every MoE block through the streaming expert pool.
+        //
+        //    The prerouter's heads land in memory after this, so the space they
+        //    will take has to be kept out of the expert cache's share now —
+        //    sizing the cache against memory the prerouter is about to claim is
+        //    how a load that fits becomes a load that gets the app killed. The
+        //    file is read once into per-head copies and once more as the stacks
+        //    built from them, hence twice its size.
+        let prerouterBytes = prerouterURL.map { 2 * fileSize(of: $0) } ?? 0
         let installed = installStreamingExperts(
             in: model, shards: shards, budgetBytes: expertCacheBudgetBytes,
+            reservedBytes: 1_536 * 1024 * 1024 + prerouterBytes,
             groupSize: quantization?.groupSize ?? 64, bits: quantization?.bits ?? 4)
         guard installed > 0 else {
             throw Edge0StreamingLoaderError.noExpertTensors(directory.lastPathComponent)
@@ -125,6 +135,30 @@ enum Edge0StreamingLoader {
                 to: model, fileURL: loraURL, rank: 16, alpha: 32.0)
         }
 
+        // 5. The prerouter, last: it walks the settled module tree and hangs on
+        //    to each MoE block, and LoRA has just replaced some of their
+        //    children.
+        //
+        //    A failure here is reported, not thrown. The prerouter is a speed
+        //    feature on top of a model that already works without it, and the
+        //    likeliest failure is the adapter file simply not being on the
+        //    device — refusing to load a 23 GB checkpoint over that would be
+        //    the worse outcome by far.
+        if let prerouterURL, FileManager.default.fileExists(atPath: prerouterURL.path) {
+            do {
+                let heads = try Edge0Prerouter.install(
+                    into: model, fileURL: prerouterURL,
+                    startLayer: tier.prerouterStartLayer, hidden: tier.prerouterHiddenSize)
+                Edge0Log.write(
+                    "prerouter: \(heads) baş, \(tier.prerouterStartLayer). katmandan itibaren")
+            } catch {
+                Edge0Log.failure("prerouter kurulamadı", error)
+            }
+        } else if prerouterURL != nil {
+            Edge0Log.write(
+                "prerouter dosyası yok: \(tier.prerouterFileName ?? "-") — kapılarla çalışılıyor")
+        }
+
         let tokenizer = try await tokenizerLoader.load(from: directory)
         let modelConfiguration = ModelConfiguration(
             directory: directory, eosTokenIds: tier.eosTokenIds)
@@ -138,6 +172,12 @@ enum Edge0StreamingLoader {
         return (context, report)
     }
 
+    /// Bytes on disk, or zero for a file that is not there.
+    private static func fileSize(of url: URL) -> Int {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        return (attributes?[.size] as? NSNumber)?.intValue ?? 0
+    }
+
     /// Replaces each MoE block's resident expert layer with a streaming one.
     /// Returns how many blocks were converted.
     ///
@@ -147,7 +187,8 @@ enum Edge0StreamingLoader {
     /// experts", it is forty times that, and on this checkpoint it is well over
     /// a gigabyte.
     private static func installStreamingExperts(
-        in model: Module, shards: SafetensorsShardSet, budgetBytes: Int, groupSize: Int, bits: Int
+        in model: Module, shards: SafetensorsShardSet, budgetBytes: Int, reservedBytes: Int,
+        groupSize: Int, bits: Int
     ) -> Int {
         var blocks: [(block: E0Qwen35SparseMoeBlock, names: ExpertTensorNames)] = []
         for (path, module) in model.namedModules() {
@@ -170,8 +211,7 @@ enum Edge0StreamingLoader {
         // This is the one number that decides decode speed. Every miss is a
         // read from storage, and with 256 experts a small cache means nearly
         // every layer of every token goes to disk.
-        let reserve = 1_536 * 1024 * 1024
-        let available = Int(os_proc_available_memory()) - reserve
+        let available = Int(os_proc_available_memory()) - reservedBytes
         let affordable = max(0, available)
         let effective = min(budgetBytes, affordable)
         let slots = min(96, max(2, effective / max(1, blocks.count * perExpert)))

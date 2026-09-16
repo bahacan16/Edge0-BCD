@@ -28,6 +28,16 @@ final class AppSettings {
         didSet { store(expertStreaming, "expertStreaming") }
     }
 
+    /// Use edge0's trained prerouter: each layer predicts the next layer's
+    /// routing one token ahead, so the experts for a whole step can be read
+    /// from storage in parallel while the previous step finishes. It also
+    /// *supplies* the routing at decode, which is the configuration the
+    /// Recover-LoRA was trained in. Off = every layer asks its own gate and
+    /// waits for the reads, one layer at a time.
+    var usePrerouter: Bool {
+        didSet { store(usePrerouter, "usePrerouter") }
+    }
+
     /// Total RAM the streamed experts may cache, across every MoE layer.
     ///
     /// A decode step touches only K experts per layer, but prompt processing
@@ -102,6 +112,7 @@ final class AppSettings {
             d.object(forKey: Self.key("expertCacheBudgetMB")) as? Int
             ?? Self.defaultExpertCacheBudgetMB
 
+        usePrerouter = d.object(forKey: Self.key("usePrerouter")) as? Bool ?? true
         autoLoadLastModel = d.object(forKey: Self.key("autoLoadLastModel")) as? Bool ?? true
 
         temperature = d.object(forKey: Self.key("temperature")) as? Double

@@ -99,7 +99,31 @@ Klasörde şunlar olmalı:
 | `chat_template.jinja` | **Evet** — sohbet şablonu ayrı dosyada; onsuz cevaplar bozulur |
 | `generation_config.json` | varsa kopyalanır |
 | `lora_edge0_35b.safetensors` | **Evet** — Recover-LoRA; olmazsa kalite düşer |
-| `prerouter_edge0_35b.safetensors` | **Hayır** — bu uygulama prerouter'ı kullanmıyor, kopyalanmaz |
+| `prerouter_edge0_35b.safetensors` | **Evet** — hız için; aşağıya bakın |
+
+### Prerouter
+
+edge0'ın eğitilmiş prerouter'ı, 35B katmanında akıtmalı üretimin asıl hız
+kaynağıdır. Her katman, bir sonraki katmanın hangi expert'lere gideceğini bir
+token önceden tahmin eden küçük bir baş taşır. Otuz üç baş adım sınırında tek
+bir yığın halinde çalışır, ve sonuç şu: bir sonraki token'ın kırk katman
+boyunca ihtiyaç duyacağı bütün expert'ler, o token'ın hesabı başlamadan önce
+bilinir.
+
+Bunun iki sonucu var. Birincisi, bütün okumalar aynı anda, arka planda
+başlatılabilir — katman katman sırayla beklemek yerine. İkincisi, tahmin
+yönlendirmenin *kendisidir*: blok kendi kapısını çağırmak yerine tahmini
+kullanır, yani önceden okunan expert'ler tam olarak çalışacak olanlardır.
+İkincisi bir optimizasyon değil, birincisini doğru kılan şeydir — ve edge0'ın
+Recover-LoRA'sının neden prerouter devredeyken eğitildiğinin de cevabıdır.
+
+`prerouter_edge0_35b.safetensors` (≈138 MB) model klasöründe yoksa uygulama
+yine çalışır, sadece her katman kendi kapısını sorar ve okumaları tek tek
+bekler. Ayarlar → Çalışma zamanı altındaki anahtarla kapatılabilir.
+
+8B katmanında prerouter portlanmadı: oradaki başlar Ling'in kendi MoE bloğunun
+içinde tüketiliyor (sigmoid grup-sınırlı seçim), dışarıdan yönlendirmeyi
+değiştirerek değil.
 
 ### Günlük
 

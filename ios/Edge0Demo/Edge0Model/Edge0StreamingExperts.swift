@@ -106,6 +106,36 @@ private struct ExpertSlice {
     let downBiases: MLXArray?
 }
 
+/// One expert's bytes in one projection: a contiguous run of a mapped shard.
+struct ExpertByteRange {
+    let shard: SafetensorsMmap
+    let offset: Int
+    let byteCount: Int
+}
+
+/// Forces mapped expert bytes resident, as many at a time as the ranges allow.
+///
+/// This is where the streaming tier's decode speed is won or lost. Each expert
+/// is about 1.7 MB of contiguous file, which the device can serve quickly — but
+/// faulting them in one after another turns forty layers of four experts into a
+/// chain of hundreds of round trips per token, and the measured result is a
+/// fraction of what the storage can do. Only POSIX work happens here; MLX is
+/// never touched, so this is safe to run off the generation thread.
+enum Edge0ExpertPaging {
+    static func fault(_ ranges: [ExpertByteRange]) {
+        guard ranges.count > 1 else {
+            for range in ranges {
+                range.shard.fault(offset: range.offset, byteCount: range.byteCount)
+            }
+            return
+        }
+        DispatchQueue.concurrentPerform(iterations: ranges.count) { index in
+            let range = ranges[index]
+            range.shard.fault(offset: range.offset, byteCount: range.byteCount)
+        }
+    }
+}
+
 /// Reads expert slices out of mapped shards, keeping the most recent ones.
 final class ExpertSlotPool {
     private let shards: SafetensorsShardSet
@@ -158,33 +188,28 @@ final class ExpertSlotPool {
         lock.withLock { cache[expert] != nil }
     }
 
+    /// Where each of these experts' bytes live, skipping the ones already in
+    /// memory. Cheap enough to call on the generation thread — it is dictionary
+    /// lookups and arithmetic, no I/O.
+    func coldRanges(for experts: [Int32]) -> [ExpertByteRange] {
+        experts.filter { !isCached($0) }.flatMap(byteRanges(of:))
+    }
+
+    private func byteRanges(of expert: Int32) -> [ExpertByteRange] {
+        [names.gateWeight, names.upWeight, names.downWeight].compactMap { tensor in
+            guard let shard = shards.shard(for: tensor), let entry = shard.entries[tensor],
+                let leading = entry.shape.first, leading > 0
+            else { return nil }
+            let rowBytes = entry.byteCount / leading
+            return ExpertByteRange(
+                shard: shard, offset: entry.offset + Int(expert) * rowBytes,
+                byteCount: rowBytes)
+        }
+    }
+
     /// Brings every byte these experts need into memory, several at a time.
-    ///
-    /// This is where the streaming tier's decode speed is won or lost. Each
-    /// expert is about 1.7 MB of contiguous file, which the device can serve
-    /// quickly — but faulting them in one after another turns forty layers of
-    /// four experts into a chain of hundreds of round trips per token, and the
-    /// measured result is a fraction of what the storage can do. Only POSIX
-    /// work happens here; MLX is never touched off the main path.
     func warm(experts: [Int32]) {
-        let ranges = experts.flatMap { expert in
-            [names.gateWeight, names.upWeight, names.downWeight].compactMap {
-                tensor -> (SafetensorsMmap, Int, Int)? in
-                guard let shard = shards.shard(for: tensor), let entry = shard.entries[tensor],
-                    let leading = entry.shape.first, leading > 0
-                else { return nil }
-                let rowBytes = entry.byteCount / leading
-                return (shard, entry.offset + Int(expert) * rowBytes, rowBytes)
-            }
-        }
-        guard ranges.count > 1 else {
-            for range in ranges { range.0.fault(offset: range.1, byteCount: range.2) }
-            return
-        }
-        DispatchQueue.concurrentPerform(iterations: ranges.count) { index in
-            let range = ranges[index]
-            range.0.fault(offset: range.1, byteCount: range.2)
-        }
+        Edge0ExpertPaging.fault(experts.flatMap(byteRanges(of:)))
     }
 
     fileprivate func slice(for expert: Int32) throws -> ExpertSlice {
@@ -452,6 +477,13 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
         let present = arrays.compactMap { $0 }
         guard present.count == arrays.count, !present.isEmpty else { return nil }
         return MLX.stacked(present)
+    }
+
+    /// The byte ranges these experts would have to read, skipping what is
+    /// already cached. The prerouter uses this to page in a whole predicted
+    /// step ahead of the forward that needs it.
+    func coldRanges(for experts: [Int32]) -> [ExpertByteRange] {
+        pool.coldRanges(for: experts)
     }
 
     var cacheStatistics: (hits: Int, misses: Int) { (pool.hits, pool.misses) }

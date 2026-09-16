@@ -404,6 +404,16 @@ final class E0Qwen35SparseMoeBlock: Module, UnaryLayer {
     @ModuleInfo(key: "shared_expert") var sharedExpert: E0Qwen3NextMLP
     @ModuleInfo(key: "shared_expert_gate") var sharedExpertGate: Linear
 
+    // edge0's trained prerouter, when one is installed. Held weakly because the
+    // prerouter keeps every block it drives; the model owns both.
+    //
+    // Deliberately NOT MLXArray-typed properties: `Module` discovers parameters
+    // by reflecting over stored properties, so an `MLXArray?` here would join
+    // the parameter tree and be counted, updated and evaluated as a weight. The
+    // per-step captures live in the prerouter instead, keyed by layer.
+    weak var prerouter: Edge0Prerouter?
+    var prerouterLayer: Int = -1
+
     init(_ args: E0Qwen35TextConfiguration) {
         self.normTopkProb = args.normTopkProb
         self.numExperts = args.numExperts
@@ -424,6 +434,20 @@ final class E0Qwen35SparseMoeBlock: Module, UnaryLayer {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
+        // Only a decode step goes through the prerouter. Prompt processing runs
+        // many tokens at once, which the heads were never trained on and which
+        // has nothing to gain from a prediction anyway: every expert the prompt
+        // touches is already being read.
+        if let prerouter, x.ndim == 3, x.dim(1) == 1 {
+            return prerouted(x, prerouter: prerouter)
+        }
+
+        let (inds, scores) = route(x)
+        return combine(x, inds: inds, scores: scores)
+    }
+
+    /// The block's own gate: precise softmax -> top-k -> renormalize.
+    private func route(_ x: MLXArray) -> (MLXArray, MLXArray) {
         var gates = gate(x)
         gates = MLX.softmax(gates, axis: -1, precise: true)
 
@@ -434,7 +458,10 @@ final class E0Qwen35SparseMoeBlock: Module, UnaryLayer {
         if normTopkProb {
             scores = scores / scores.sum(axis: -1, keepDims: true)
         }
+        return (inds, scores)
+    }
 
+    private func combine(_ x: MLXArray, inds: MLXArray, scores: MLXArray) -> MLXArray {
         let y = switchMLP(x, inds)
         let combined = weightedExpertSum(y, scores)
 
@@ -442,6 +469,30 @@ final class E0Qwen35SparseMoeBlock: Module, UnaryLayer {
         sharedY = sigmoid(sharedExpertGate(x)) * sharedY
 
         return combined + sharedY
+    }
+
+    /// Routes from the prediction the layer below made for this layer one token
+    /// ago, and captures what this layer's own head needs at the step boundary.
+    ///
+    /// The prediction replaces the gate rather than merely hinting at it — which
+    /// is the whole point, because it means the experts prefetched for this step
+    /// are exactly the ones about to run, with nothing dropped. edge0's
+    /// Recover-LoRA is trained for this configuration. When there is no
+    /// prediction yet (the first decode step of a turn, or a layer below the
+    /// prerouter's start) the gate answers, which is the same fallback the heads
+    /// were trained against at position zero.
+    private func prerouted(_ x: MLXArray, prerouter: Edge0Prerouter) -> MLXArray {
+        let inds: MLXArray
+        let scores: MLXArray
+        if let predicted = prerouter.prediction(for: prerouterLayer) {
+            inds = predicted.indices
+            scores = predicted.scores
+        } else {
+            (inds, scores) = route(x)
+        }
+
+        prerouter.capture(layer: prerouterLayer, input: x, oneHot: prerouter.oneHot(inds))
+        return combine(x, inds: inds, scores: scores)
     }
 }
 
@@ -570,6 +621,9 @@ public class E0Qwen35TextModel: Module, LLMModel, KVCacheDimensionProvider {
 
     @ModuleInfo(key: "lm_head") var lmHead: Linear?
 
+    /// edge0's trained prerouter, installed after the weights are in.
+    var prerouter: Edge0Prerouter?
+
     public init(_ args: E0Qwen35TextConfiguration) {
         self.configuration = args
         self.vocabularySize = args.vocabularySize
@@ -582,12 +636,22 @@ public class E0Qwen35TextModel: Module, LLMModel, KVCacheDimensionProvider {
     }
 
     public func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
+        // A multi-token forward is a prompt, i.e. the start of a turn. Anything
+        // the prerouter captured belongs to the previous turn's last token, and
+        // handing that to this turn's first step would route it from another
+        // conversation's hidden state.
+        if let prerouter, inputs.dim(-1) > 1 { prerouter.reset() }
+
         var out = model(inputs, cache: cache)
         if let lmHead {
             out = lmHead(out)
         } else {
             out = model.embedTokens.asLinear(out)
         }
+
+        // The step boundary: every head as one batch, and the next token's
+        // expert reads issued before the next forward starts.
+        if let prerouter, inputs.dim(-1) == 1 { prerouter.stageAll(logits: out) }
         return out
     }
 
