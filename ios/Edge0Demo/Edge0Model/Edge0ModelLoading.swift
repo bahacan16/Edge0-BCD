@@ -138,7 +138,8 @@ enum Edge0Storage {
             (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
         guard contents.contains(where: { $0.hasSuffix(".safetensors") }) else { return false }
 
-        guard let tier = mustMatch else { return true }
+        // `mustMatch` is the argument label; the parameter is `tier`.
+        guard let tier else { return true }
         guard let data = try? Data(contentsOf: config),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let type = json["model_type"] as? String

@@ -75,13 +75,18 @@ struct Edge0Tokenizer: MLXLMCommon.Tokenizer {
             guard let sidecarTemplate else {
                 throw MLXLMCommon.TokenizerError.missingChatTemplate
             }
+            // Every argument is spelled out: this goes through the protocol
+            // requirement rather than the extension, and a protocol
+            // requirement carries no default values.
             return try upstream.applyChatTemplate(
                 messages: messages,
                 chatTemplate: .literal(sidecarTemplate),
-                // This overload defaults `addGenerationPrompt` to false, unlike
-                // the one above it. Without it the model receives the
+                // The template-taking overload defaults this to false, unlike
+                // the one beside it. Without it the model receives the
                 // conversation and is never prompted to answer.
                 addGenerationPrompt: true,
+                truncation: false,
+                maxLength: nil,
                 tools: tools,
                 additionalContext: additionalContext)
         }
