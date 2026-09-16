@@ -127,6 +127,7 @@ final class ChatViewModel {
 
             self.isGenerating = false
             self.generationTask = nil
+            self.logGenerationStatistics(at: target, in: conversation)
             self.persist()
             Haptics.success(enabled: self.settings.hapticsEnabled)
         }
@@ -239,6 +240,31 @@ final class ChatViewModel {
     }
 
     // MARK: Stream plumbing
+
+    /// Speed and expert-cache behaviour, side by side in the log.
+    ///
+    /// On the streaming tier these two numbers explain each other: every cache
+    /// miss is a read from storage in the middle of a token, so a low hit rate
+    /// is what a low tokens-per-second looks like from the other end.
+    private func logGenerationStatistics(at id: UUID, in conversation: UUID) {
+        guard let index = index(of: id, in: conversation),
+            let metrics = messages[index].metrics
+        else { return }
+        var line = String(
+            format: "üretim: %.2f tok/sn · ilk token %.0f ms · %d token",
+            metrics.tokensPerSecond, metrics.timeToFirstTokenMS, metrics.generatedTokens)
+        if Edge0ExpertCaches.layerCount > 0 {
+            let statistics = Edge0ExpertCaches.statistics
+            let total = statistics.hits + statistics.misses
+            if total > 0 {
+                let percent = Double(statistics.hits) / Double(total) * 100
+                line += String(
+                    format: " · expert önbellek isabeti %%%.0f (%d/%d)",
+                    percent, statistics.hits, total)
+            }
+        }
+        Edge0Log.write(line)
+    }
 
     /// Position of the message being streamed into, or nil if the transcript
     /// it belonged to is no longer the one on screen.

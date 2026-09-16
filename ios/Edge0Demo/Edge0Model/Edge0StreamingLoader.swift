@@ -13,6 +13,7 @@
 // Everything else — tokenizer, processor, chat template — is assembled the
 // same way `LLMModelFactory` does it.
 
+import Darwin
 import Foundation
 import MLX
 import MLXLMCommon
@@ -160,10 +161,26 @@ enum Edge0StreamingLoader {
         guard let first = blocks.first else { return 0 }
 
         let perExpert = first.names.bytesPerExpert(shards: shards)
-        // At least two slots so a layer can hold the experts of consecutive
-        // tokens; the ceiling keeps a generous budget from pinning a whole
-        // layer, which would defeat the point of streaming.
-        let slots = min(64, max(2, budgetBytes / max(1, blocks.count * perExpert)))
+
+        // Sized against what is free *now*, with the resident weights already
+        // in memory — the budget the user set was chosen before any of this
+        // was loaded. Whatever is left minus a reserve for the KV cache and
+        // activations is what the experts may have.
+        //
+        // This is the one number that decides decode speed. Every miss is a
+        // read from storage, and with 256 experts a small cache means nearly
+        // every layer of every token goes to disk.
+        let reserve = 1_536 * 1024 * 1024
+        let available = Int(os_proc_available_memory()) - reserve
+        let affordable = max(0, available)
+        let effective = min(budgetBytes, affordable)
+        let slots = min(96, max(2, effective / max(1, blocks.count * perExpert)))
+
+        Edge0Log.write(
+            "expert önbelleği: istenen \(budgetBytes / 1_048_576) MB,"
+                + " kullanılabilir \(affordable / 1_048_576) MB,"
+                + " expert başına \(perExpert / 1024) KB,"
+                + " katman başına \(slots) slot (\(blocks.count) katman)")
 
         for (block, names) in blocks {
             let streaming = Edge0StreamingSwitchGLU(

@@ -185,11 +185,6 @@ final class ExpertSlotPool {
             downScales: try read(names.downScales, expert: expert),
             downBiases: readOptional(names.downBiases, expert: expert)
         )
-        // Materialize now so the mapped pages can go cold again.
-        eval(
-            slice.gateWeight, slice.gateScales, slice.upWeight, slice.upScales,
-            slice.downWeight, slice.downScales)
-
         lock.withLock {
             cache[expert] = slice
             touch(expert)
@@ -392,6 +387,15 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
         for expert in experts {
             slices.append(try pool.slice(for: expert))
         }
+        // One materialisation for the whole layer rather than one per expert.
+        // These are leaves copied out of the mapping, but each `eval` is still
+        // a trip through MLX's scheduler, and at forty layers times four
+        // experts a token that adds up.
+        eval(
+            slices.flatMap {
+                [$0.gateWeight, $0.gateScales, $0.upWeight, $0.upScales,
+                 $0.downWeight, $0.downScales]
+            })
         let slots = StackedSlots(
             gateWeight: MLX.stacked(slices.map(\.gateWeight)),
             gateScales: MLX.stacked(slices.map(\.gateScales)),

@@ -124,10 +124,13 @@ final class AppSettings {
     /// A share of what iOS will actually let this process allocate, rather
     /// than of the device's RAM — an app gets only a fraction of the latter,
     /// so sizing against it is how a cache ends up getting the app killed.
+    /// Generous by default: this is the number that decides decode speed on
+    /// the streaming tier, and the loader clamps it to what is actually free
+    /// once the model is resident, so asking for too much is safe.
     static var defaultExpertCacheBudgetMB: Int {
         let available = Int(ModelManager.availableProcessMemoryBytes) / (1024 * 1024)
-        guard available > 0 else { return 256 }
-        return max(128, min(1024, available / 8))
+        guard available > 0 else { return 1024 }
+        return max(512, min(3072, available / 3))
     }
 
     /// Resets sampling to the selected tier's shipped defaults.

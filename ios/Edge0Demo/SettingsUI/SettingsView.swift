@@ -140,12 +140,22 @@ struct SettingsView: View {
             StepperRow(
                 title: "MLX önbellek sınırı", value: settings.gpuCacheLimitMB,
                 range: 0...1024, step: 32, unit: "MB")
-            Toggle("Expert akışı (SSD offload)", isOn: settings.expertStreaming)
-                .disabled(!(models.activeTier ?? settings.wrappedValue.selectedTier)
-                    .supportsExpertStreaming)
+            // A tier that requires streaming gets it whatever the switch says,
+            // so the switch has to read as on rather than quietly contradict
+            // what the app is doing.
+            Toggle(
+                "Expert akışı (SSD offload)",
+                isOn: (models.activeTier ?? settings.wrappedValue.selectedTier)
+                    .requiresExpertStreaming
+                    ? .constant(true) : settings.expertStreaming
+            )
+            .disabled(!(models.activeTier ?? settings.wrappedValue.selectedTier)
+                .supportsExpertStreaming
+                || (models.activeTier ?? settings.wrappedValue.selectedTier)
+                    .requiresExpertStreaming)
             StepperRow(
                 title: "Expert önbelleği", value: settings.expertCacheBudgetMB,
-                range: 128...2048, step: 128, unit: "MB")
+                range: 256...4096, step: 256, unit: "MB")
             LabeledContent("MLX aktif bellek") {
                 Text(ModelManager.formatBytes(ModelManager.mlxActiveMemoryBytes))
                     .monospacedDigit()
