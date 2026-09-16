@@ -286,6 +286,17 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
     private let quantization: ExpertQuantization
     private let activationFunction: (MLXArray) -> MLXArray
     private var lastSlots: (key: [Int32], slots: StackedSlots)?
+    /// Above this many distinct experts in one call, the token dimension is
+    /// split and processed in pieces. Without it a long prompt can reference
+    /// every expert at once, which would stack the entire layer — the exact
+    /// allocation this class exists to avoid.
+    ///
+    /// It tracks the cache size because the stack is a transient copy on top
+    /// of the cache: a fixed ceiling would let a device given a small budget
+    /// still allocate the same large stack during prefill, which is where the
+    /// budget matters most. The floor keeps it comfortably above the experts
+    /// a single token routes to, so splitting always terminates.
+    private let maxExpertsPerCall: Int
 
     init(
         shards: SafetensorsShardSet,
@@ -297,6 +308,7 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
             shards: shards, names: names, capacity: hotSlots)
         self.quantization = quantization
         self.activationFunction = MLXNN.silu
+        self.maxExpertsPerCall = max(8, hotSlots)
         super.init(inputDims: 1, hiddenDims: 1, numExperts: 1, bias: false)
         Edge0ExpertCaches.register(self)
     }
@@ -307,19 +319,13 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
         pool.purge()
     }
 
-    /// Above this many distinct experts in one call, the token dimension is
-    /// split and processed in pieces. Without it a long prompt can reference
-    /// every expert at once, which would stack the entire layer — the exact
-    /// allocation this class exists to avoid.
-    private static let maxExpertsPerCall = 32
-
     override func callAsFunction(_ x: MLXArray, _ indices: MLXArray) -> MLXArray {
         // Reading the router's choice costs a GPU→CPU sync, and this runs once
         // per MoE layer per step, so it is read once and passed down rather
         // than fetched again inside `project`.
         let requested = indices.asArray(Int32.self)
         let tokenCount = indices.dim(-2)
-        if tokenCount > 1, Set(requested).count > Self.maxExpertsPerCall {
+        if tokenCount > 1, Set(requested).count > maxExpertsPerCall {
             return splitOverTokens(x, indices)
         }
         return project(x, indices, requested: requested)
