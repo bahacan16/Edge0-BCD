@@ -51,6 +51,13 @@ jobs:
             -scheme Edge0Demo \
             -derivedDataPath build
 
+      # The build number is the run number and the commit is stamped into the
+      # bundle. Every build so far has called itself "1.0 (1)", so a log from
+      # the device could not say which one produced it, and working that out
+      # from behaviour cost this project two misdiagnoses. It also matters for
+      # installing: a build number that only ever goes up is what lets a new
+      # IPA replace the old app in place, keeping its Documents folder — and
+      # its checkpoint — instead of being reinstalled from scratch.
       - name: Build unsigned .app for iOS device
         working-directory: ios
         run: |
@@ -62,6 +69,8 @@ jobs:
             -destination "generic/platform=iOS" \
             -derivedDataPath build \
             -skipMacroValidation \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            INFOPLIST_KEY_Edge0Commit=$(git rev-parse --short HEAD) \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \

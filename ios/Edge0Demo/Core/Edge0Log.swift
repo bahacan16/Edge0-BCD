@@ -47,11 +47,18 @@ enum Edge0Log {
         write("belgeler: \(fileURL.deletingLastPathComponent().path)")
     }
 
+    /// Version, build and the commit it came from.
+    ///
+    /// The commit is the part that earns its place. Every build called itself
+    /// "1.0 (1)", so a log sent from the device could not say which one wrote
+    /// it, and reconstructing that from how the app behaved is how a page-fault
+    /// change got blamed on a prerouter for two rounds.
     private static var version: String {
         let info = Bundle.main.infoDictionary
         let short = info?["CFBundleShortVersionString"] as? String ?? "?"
         let build = info?["CFBundleVersion"] as? String ?? "?"
-        return "\(short) (\(build))"
+        let commit = info?["Edge0Commit"] as? String
+        return "\(short) (\(build))" + (commit.map { " · \($0)" } ?? "")
     }
 
     private static func rotateIfNeeded() {
