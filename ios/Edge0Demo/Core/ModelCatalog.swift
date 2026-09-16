@@ -39,6 +39,15 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
         }
     }
 
+    /// What the checkpoint calls itself in `architectures`, for the tiers whose
+    /// config.json carries no `model_type` — edge0's 8B is one.
+    var architectureNames: [String] {
+        switch self {
+        case .edge0_8b: ["BailingMoeV3ForCausalLM", "BailingMoeForCausalLM"]
+        case .edge0_35b: ["Qwen3MoeForCausalLM", "Qwen3NextForCausalLM"]
+        }
+    }
+
     var loraFileName: String {
         switch self {
         case .edge0_8b: "lora_edge0_8b.safetensors"

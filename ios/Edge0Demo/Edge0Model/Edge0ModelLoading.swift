@@ -141,10 +141,15 @@ enum Edge0Storage {
         // `mustMatch` is the argument label; the parameter is `tier`.
         guard let tier else { return true }
         guard let data = try? Data(contentsOf: config),
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let type = json["model_type"] as? String
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return false }
-        return type == tier.modelType
+        if let type = json["model_type"] as? String { return type == tier.modelType }
+        // No `model_type` at all is not a broken checkpoint: edge0's 8B names
+        // itself through `architectures` instead. Falling back to that is what
+        // keeps a tier whose config never had the field from being invisible in
+        // a shared folder.
+        let architectures = (json["architectures"] as? [String]) ?? []
+        return architectures.contains { tier.architectureNames.contains($0) }
     }
 
     /// A usable checkpoint at `directory`, or in one of its immediate
@@ -410,16 +415,21 @@ enum Edge0Loader {
             container = ModelContainer(context: loaded.context)
             report = loaded.loraReport
         } else {
-            container = try await LLMModelFactory.shared.loadContainer(
-                from: directory,
-                using: Edge0TokenizerLoader())
-
-            if applyLoRA, FileManager.default.fileExists(atPath: loraURL.path) {
-                report = try await container.perform { context in
-                    try Edge0LoRA.apply(
-                        to: context.model, fileURL: loraURL, rank: 16, alpha: 32.0)
-                }
-            }
+            // Not `LLMModelFactory`: it reads `model_type` out of config.json
+            // and refuses the file without one, and edge0's 8B checkpoint does
+            // not have one — it identifies itself through `architectures` and
+            // an `auto_map` pointing at its own Python classes, the way a
+            // trust_remote_code model does. A loader that already knows which
+            // architecture it is building has no business asking the file to
+            // name it.
+            let loaded = try await Edge0ResidentLoader.load(
+                tier: tier,
+                directory: directory,
+                tokenizerLoader: Edge0TokenizerLoader(),
+                loraURL: applyLoRA ? loraURL : nil
+            )
+            container = ModelContainer(context: loaded.context)
+            report = loaded.loraReport
         }
 
         Edge0Log.write("ağırlıklar yüklendi")
