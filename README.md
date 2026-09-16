@@ -69,6 +69,24 @@ Model dosyaları `Application Support` altında tutulur (iOS'un temizleyebildiğ
 `Caches` değil) ve iCloud yedeğinden hariç tutulur. Sohbetler de aynı yerde,
 sohbet başına bir JSON dosyası olarak saklanır.
 
+### Hazır indirilmiş modeli kullanmak
+
+35B ~23 GB; dosyalar zaten bir Mac'te, iCloud Drive'da veya USB-C diskte
+duruyorsa telefondan tekrar indirmeye gerek yok. Modeller sekmesindeki
+**klasör** düğmesi bir klasör seçtirir ve gerekli dosyaları uygulamanın kendi
+deposuna kopyalar.
+
+Klasörde şunlar olmalı:
+
+| Dosya | Gerekli mi |
+|---|---|
+| `config.json` | **Evet** — mimari ve quantization bilgisi |
+| `model-*.safetensors` (+ `model.safetensors.index.json`) | **Evet** |
+| `tokenizer.json`, `tokenizer_config.json` | **Evet** |
+| `generation_config.json`, chat template (`*.jinja`) | varsa kopyalanır |
+| `lora_edge0_35b.safetensors` | **Evet** — Recover-LoRA; olmazsa kalite düşer |
+| `prerouter_edge0_35b.safetensors` | **Hayır** — bu uygulama prerouter'ı kullanmıyor, kopyalanmaz |
+
 ### Bellek
 
 35B'nin expert önbelleği **MB cinsinden** ayarlanır, katman başına expert

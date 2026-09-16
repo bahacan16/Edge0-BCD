@@ -167,6 +167,75 @@ final class ModelManager {
         }
     }
 
+    /// Copies a checkpoint the user already has into the app's storage, then
+    /// loads it. Reuses the load stamp and phase machinery so an import cannot
+    /// race a download, and so cancelling works the same way.
+    func importModel(tier: Edge0Tier, from source: URL, settings: AppSettings) {
+        guard loadTask == nil else { return }
+
+        unload()
+        pendingTier = tier
+        lastProgressSample = nil
+        smoothedBytesPerSecond = 0
+        phase = .downloading(fraction: 0, detail: "Kopyalanıyor…")
+        UIApplication.shared.isIdleTimerDisabled = true
+
+        loadGeneration += 1
+        let generation = loadGeneration
+
+        loadTask = Task { [weak self] in
+            defer {
+                UIApplication.shared.isIdleTimerDisabled = false
+                if self?.loadGeneration == generation { self?.loadTask = nil }
+            }
+            do {
+                // The picked folder lives outside the sandbox; access has to be
+                // opened around every read of it and closed afterwards.
+                let scoped = source.startAccessingSecurityScopedResource()
+                defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+
+                try await Task.detached(priority: .utility) {
+                    _ = try Edge0Importer.run(tier: tier, from: source) { copied, total in
+                        Task { @MainActor [weak self] in
+                            guard self?.loadGeneration == generation else { return }
+                            self?.reportCopy(copied: copied, total: total)
+                        }
+                    }
+                }.value
+
+                guard let self, !Task.isCancelled, self.loadGeneration == generation else {
+                    return
+                }
+                self.refreshStorage()
+                self.loadTask = nil
+                self.prepare(tier: tier, settings: settings)
+            } catch is CancellationError {
+                guard self?.loadGeneration == generation else { return }
+                self?.phase = .idle
+            } catch {
+                guard self?.loadGeneration == generation else { return }
+                self?.phase = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    private func reportCopy(copied: Int64, total: Int64) {
+        guard total > 0 else { return }
+        var parts = ["\(Self.formatBytes(copied)) / \(Self.formatBytes(total))"]
+        if let rate = updateRate(completed: copied), rate > 0 {
+            parts.append("\(Self.formatBytes(Int64(rate)))/sn")
+            let remaining = Double(total - copied) / rate
+            if remaining.isFinite, remaining > 0 {
+                parts.append("~\(Self.formatDuration(remaining))")
+            }
+        }
+        let fraction = Double(copied) / Double(total)
+        phase =
+            fraction >= 1.0
+            ? .preparing("Ağırlıklar yükleniyor…")
+            : .downloading(fraction: fraction, detail: parts.joined(separator: " · "))
+    }
+
     func cancelLoad() {
         // Bumping the stamp is what makes this stick: cancellation is
         // cooperative, so the task may still be mid-load and would otherwise

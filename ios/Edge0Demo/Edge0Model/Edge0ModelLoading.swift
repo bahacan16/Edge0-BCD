@@ -57,21 +57,59 @@ enum Edge0Storage {
         }
     }
 
-    static func isDownloaded(_ tier: Edge0Tier) -> Bool {
-        guard let directory = snapshotDirectory(for: tier) else { return false }
+    /// Where a checkpoint imported from Files lands. Kept apart from the Hub
+    /// cache so the two can never be confused for one another, and so deleting
+    /// one does not disturb the other.
+    static func importedDirectory(for tier: Edge0Tier) -> URL {
+        modelsDirectory
+            .appendingPathComponent("imported", isDirectory: true)
+            .appendingPathComponent(tier.rawValue, isDirectory: true)
+    }
+
+    /// True when a directory holds something the loaders can actually use.
+    private static func isUsable(_ directory: URL) -> Bool {
+        guard
+            FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent("config.json").path)
+        else { return false }
         let contents =
             (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
         return contents.contains { $0.hasSuffix(".safetensors") }
     }
 
+    /// The checkpoint to load, wherever it came from. An imported copy wins:
+    /// the user put it there deliberately.
+    static func localDirectory(for tier: Edge0Tier) -> URL? {
+        let imported = importedDirectory(for: tier)
+        if isUsable(imported) { return imported }
+        if let snapshot = snapshotDirectory(for: tier), isUsable(snapshot) { return snapshot }
+        return nil
+    }
+
+    static func isDownloaded(_ tier: Edge0Tier) -> Bool {
+        localDirectory(for: tier) != nil
+    }
+
+    /// True when the tier's files were imported rather than downloaded.
+    static func isImported(_ tier: Edge0Tier) -> Bool {
+        isUsable(importedDirectory(for: tier))
+    }
+
     /// Bytes occupied by a tier, following the blob store rather than the
     /// snapshot's symlinks.
     static func diskUsage(for tier: Edge0Tier) -> Int64 {
-        guard let repo = repoID(for: tier) else { return 0 }
-        return directorySize(hubCache.repoDirectory(repo: repo, kind: .model))
+        var total = directorySize(importedDirectory(for: tier))
+        if let repo = repoID(for: tier) {
+            total += directorySize(hubCache.repoDirectory(repo: repo, kind: .model))
+        }
+        return total
     }
 
     static func delete(_ tier: Edge0Tier) throws {
+        let imported = importedDirectory(for: tier)
+        if FileManager.default.fileExists(atPath: imported.path) {
+            try FileManager.default.removeItem(at: imported)
+        }
         guard let repo = repoID(for: tier) else { return }
         let directory = hubCache.repoDirectory(repo: repo, kind: .model)
         if FileManager.default.fileExists(atPath: directory.path) {
@@ -182,14 +220,21 @@ enum Edge0Loader {
         // A phone has no memory to spare for MLX's buffer cache.
         MLX.GPU.set(cacheLimit: gpuCacheLimitMB * 1024 * 1024)
 
-        let configuration = ModelConfiguration(
-            id: tier.repoId, eosTokenIds: tier.eosTokenIds)
+        // Already on the device — imported, or downloaded on an earlier run —
+        // so there is nothing to fetch and nothing to check against the Hub.
+        let directory: URL
+        if let local = Edge0Storage.localDirectory(for: tier) {
+            directory = local
+        } else {
+            let configuration = ModelConfiguration(
+                id: tier.repoId, eosTokenIds: tier.eosTokenIds)
+            let resolved = try await resolve(
+                configuration: configuration, from: Edge0Downloader(), useLatest: false,
+                progressHandler: onProgress)
+            directory = resolved.modelDirectory
+        }
 
-        let resolved = try await resolve(
-            configuration: configuration, from: Edge0Downloader(), useLatest: false,
-            progressHandler: onProgress)
-
-        let loraURL = resolved.modelDirectory.appendingPathComponent(tier.loraFileName)
+        let loraURL = directory.appendingPathComponent(tier.loraFileName)
         let container: ModelContainer
         var report: Edge0LoRAReport?
 
@@ -198,7 +243,7 @@ enum Edge0Loader {
             // experts stay on disk and are read per step.
             let loaded = try await Edge0StreamingLoader.load(
                 tier: tier,
-                directory: resolved.modelDirectory,
+                directory: directory,
                 tokenizerLoader: #huggingFaceTokenizerLoader(),
                 expertCacheBudgetBytes: expertCacheBudgetMB * 1024 * 1024,
                 loraURL: applyLoRA ? loraURL : nil
@@ -207,7 +252,7 @@ enum Edge0Loader {
             report = loaded.loraReport
         } else {
             container = try await LLMModelFactory.shared.loadContainer(
-                from: resolved.modelDirectory,
+                from: directory,
                 using: #huggingFaceTokenizerLoader())
 
             if applyLoRA, FileManager.default.fileExists(atPath: loraURL.path) {
@@ -232,7 +277,7 @@ enum Edge0Loader {
         return Edge0LoadedModel(
             tier: tier,
             container: container,
-            directory: resolved.modelDirectory,
+            directory: directory,
             loraReport: report,
             parameterCount: parameterCount,
             health: health

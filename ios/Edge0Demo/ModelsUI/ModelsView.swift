@@ -1,11 +1,15 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 struct ModelsView: View {
     @Environment(ModelManager.self) private var models
     @Environment(AppSettings.self) private var settings
     @State private var pendingDelete: Edge0Tier?
     @State private var confirmLargeDownload: Edge0Tier?
+    @State private var importingTier: Edge0Tier?
+    @State private var showingImporter = false
+    @State private var importError: String?
 
     var body: some View {
         NavigationStack {
@@ -15,7 +19,11 @@ struct ModelsView: View {
                         TierCard(
                             tier: tier,
                             onLoad: { start(tier) },
-                            onDelete: { pendingDelete = tier }
+                            onDelete: { pendingDelete = tier },
+                            onImport: {
+                                importingTier = tier
+                                showingImporter = true
+                            }
                         )
                     }
 
@@ -46,6 +54,31 @@ struct ModelsView: View {
                     "\(tier.displayName) için indirilen \(ModelManager.formatBytes(models.diskUsage[tier] ?? 0)) silinecek."
                 )
             }
+        }
+        .fileImporter(
+            isPresented: $showingImporter,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            guard let tier = importingTier else { return }
+            importingTier = nil
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                settings.selectedTier = tier
+                models.importModel(tier: tier, from: url, settings: settings)
+            case .failure(let error):
+                importError = error.localizedDescription
+            }
+        }
+        .alert(
+            "İçe aktarılamadı",
+            isPresented: .init(
+                get: { importError != nil }, set: { if !$0 { importError = nil } })
+        ) {
+            Button("Tamam", role: .cancel) { importError = nil }
+        } message: {
+            Text(importError ?? "")
         }
         .alert(
             "Büyük indirme",
@@ -90,6 +123,7 @@ private struct TierCard: View {
     let tier: Edge0Tier
     let onLoad: () -> Void
     let onDelete: () -> Void
+    let onImport: () -> Void
 
     private var isActive: Bool { models.activeTier == tier }
     private var isDownloaded: Bool { models.downloadedTiers.contains(tier) }
@@ -182,7 +216,7 @@ private struct TierCard: View {
                 value: String(format: "~%.1f GB", tier.peakActiveMemoryGB))
             if isDownloaded {
                 LabeledRow(
-                    label: "Diskte",
+                    label: Edge0Storage.isImported(tier) ? "İçe aktarıldı" : "Diskte",
                     value: ModelManager.formatBytes(models.diskUsage[tier] ?? 0),
                     tint: Theme.mint)
             }
@@ -285,6 +319,18 @@ private struct TierCard: View {
                 .buttonStyle(.borderedProminent)
                 .tint(tier == .edge0_35b ? Theme.violet : Theme.blue)
                 .disabled(models.phase.isBusy || !models.hasRoom(for: tier))
+            }
+
+            if !isBusyWithThis, !isDownloaded {
+                // A 23 GB re-download over the phone is worth avoiding when the
+                // files are already sitting on a Mac, in iCloud Drive or on a
+                // USB-C drive.
+                Button(action: onImport) {
+                    Image(systemName: "folder.badge.plus")
+                }
+                .buttonStyle(.bordered)
+                .disabled(models.phase.isBusy)
+                .accessibilityLabel("Dosyalardan içe aktar")
             }
 
             if isDownloaded {
