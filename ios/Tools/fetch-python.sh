@@ -59,32 +59,31 @@ else
   echo "== xcframework $(du -sh "$ROOT/Python.xcframework" | cut -f1)"
 fi
 
+# Clang looks for a framework's module map at `<name>.framework/Modules/
+# module.modulemap`. This package ships one under `Headers/` instead, which is
+# where a non-framework module map lives — so `import Python` finds nothing.
+# One is written where Clang will look, naming Python.h directly rather than as
+# an umbrella so the header-completeness check has nothing to complain about.
+for slice_dir in "$ROOT"/Python.xcframework/ios-*; do
+  framework="$slice_dir/Python.framework"
+  [ -d "$framework" ] || continue
+  mkdir -p "$framework/Modules"
+  cat > "$framework/Modules/module.modulemap" <<'MAP'
+framework module Python {
+    header "Python.h"
+    export *
+    link "Python"
+}
+MAP
+  echo "== wrote $(basename "$slice_dir")/Python.framework/Modules/module.modulemap"
+done
+
 echo "== slices declared by Info.plist"
-plutil -p "$ROOT/Python.xcframework/Info.plist" 2>/dev/null \
-  | grep -E 'LibraryIdentifier' || true
+plutil -p "$ROOT/Python.xcframework/Info.plist" 2>/dev/null | grep -E 'LibraryIdentifier' || true
 echo "== slices on disk"
 ls -1 "$ROOT/Python.xcframework" | grep -E '^ios' || true
-echo "== modulemap (what `import Python` resolves against)"
+echo "== shipped modulemap under Headers"
 cat "$ROOT/Python.xcframework/ios-arm64/Python.framework/Headers/module.modulemap" 2>/dev/null \
-  || echo "(no modulemap at that path)"
-
-PKGS="$ROOT/Resources/app_packages"
-if [ -d "$PKGS" ] && [ -n "$(ls -A "$PKGS" 2>/dev/null)" ]; then
-  echo "== app_packages already present (cache hit)"
-else
-  echo "== fetching pure-Python wheels"
-  rm -rf "$PKGS" && mkdir -p "$PKGS"
-  python3 -m pip download --no-deps --only-binary=:all: --python-version 3.14 \
-    --implementation py --abi none --platform any \
-    -d /tmp/wheels ezdxf==1.0.3 pyparsing typing_extensions
-  for wheel in /tmp/wheels/*.whl; do
-    echo "   unzip $(basename "$wheel")"
-    unzip -q -o "$wheel" -d "$PKGS"
-  done
-  # Metadata the interpreter never reads, and megabytes of it.
-  rm -rf "$PKGS"/*.dist-info/RECORD "$PKGS"/*.dist-info/licenses
-  echo "== app_packages $(du -sh "$PKGS" | cut -f1)"
-fi
-
-echo "== contents"
-ls -1 "$PKGS" | head -20
+  || echo "(none there)"
+echo "== framework contents"
+ls -1 "$ROOT/Python.xcframework/ios-arm64/Python.framework" 2>/dev/null || true
