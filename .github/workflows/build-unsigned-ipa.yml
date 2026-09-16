@@ -69,8 +69,8 @@ jobs:
             -destination "generic/platform=iOS" \
             -derivedDataPath build \
             -skipMacroValidation \
+            MARKETING_VERSION=1.0.${{ github.run_number }} \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
-            INFOPLIST_KEY_Edge0Commit=$(git rev-parse --short HEAD) \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -84,6 +84,20 @@ jobs:
         with:
           path: ios/build
           key: edge0-derived-${{ hashFiles('ios/project.yml') }}-${{ github.sha }}
+
+      # Written into the built bundle rather than passed as a build setting:
+      # `INFOPLIST_KEY_*` only carries the keys Xcode knows about, so
+      # `Edge0Commit` was silently dropped and the log line that was supposed to
+      # name the commit came back without one.
+      - name: Stamp the commit into the app
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          PLIST="build/Build/Products/Release-iphoneos/Edge0Demo.app/Info.plist"
+          SHA=$(git rev-parse --short HEAD)
+          /usr/libexec/PlistBuddy -c "Add :Edge0Commit string $SHA" "$PLIST" \
+            || /usr/libexec/PlistBuddy -c "Set :Edge0Commit $SHA" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :Edge0Commit" "$PLIST"
 
       - name: Package unsigned IPA
         working-directory: ios

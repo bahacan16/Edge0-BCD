@@ -89,8 +89,12 @@ enum Edge0MemoryPlanner {
         let detail: String
         if remembered > 0 {
             // Creep back up rather than jumping: whatever made the device
-            // short of memory last time may still be running.
-            let allowed = remembered + max(1, remembered / 8)
+            // short of memory last time may still be running. A quarter at a
+            // time rather than an eighth, now that a miss costs about a
+            // millisecond instead of six — the cache is no longer the only
+            // thing standing between this model and the disk, so it can afford
+            // to find its ceiling in three loads rather than eight.
+            let allowed = remembered + max(2, remembered / 4)
             slots = clamp(min(fromMemory, allowed))
             detail =
                 "otomatik · bellek \(fromMemory) slot verirdi,"
