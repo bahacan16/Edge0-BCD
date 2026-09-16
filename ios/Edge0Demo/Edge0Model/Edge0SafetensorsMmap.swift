@@ -159,6 +159,36 @@ final class SafetensorsMmap {
         return total
     }
 
+    /// Reads a byte range with one `pread`, rather than by walking the mapping
+    /// and letting the page faults fetch it.
+    ///
+    /// This is the difference between one I/O and a hundred. An expert is about
+    /// 1.7 MB of contiguous file, and copying it out of the mapping faults it in
+    /// 16 KB at a time — 108 round trips to storage, one after another, because
+    /// `MADV_RANDOM` is set and there is deliberately no readahead to batch
+    /// them. Measured on the device: 6.09 ms for those 1.7 MB, which is 284
+    /// MB/s and about 56 µs per page, exactly what a queue-depth-one random
+    /// read costs. Asking for the whole range at once lets the kernel issue it
+    /// as the single large sequential read it always was.
+    ///
+    /// Note what this is not: an earlier attempt touched the same pages ahead
+    /// of the copy, from several threads, and made everything slower — it added
+    /// a pass rather than replacing one. This replaces the faulting copy
+    /// outright.
+    func read(offset: Int, into buffer: UnsafeMutableRawBufferPointer) throws {
+        guard offset >= 0, offset + buffer.count <= length, let base = buffer.baseAddress
+        else { throw SafetensorsError.malformedHeader(url.path) }
+        var read = 0
+        while read < buffer.count {
+            // Short reads are legal and say nothing about failure, so the loop
+            // is not optional; only 0 or -1 ends it.
+            let got = pread(
+                descriptor, base.advanced(by: read), buffer.count - read, off_t(offset + read))
+            guard got > 0 else { throw SafetensorsError.cannotOpen(url.path) }
+            read += got
+        }
+    }
+
     /// A raw pointer into the mapping. Only valid while this object is alive.
     func rawPointer(offset: Int, byteCount: Int) throws -> UnsafeRawBufferPointer {
         guard offset >= 0, byteCount >= 0, offset + byteCount <= length else {
@@ -182,10 +212,19 @@ final class SafetensorsMmap {
         let rowBytes = entry.byteCount / leading
         let offset = entry.offset + rowIndex * rowBytes
         let shape = Array(entry.shape.dropFirst())
-        let buffer = try rawPointer(offset: offset, byteCount: rowBytes)
+
+        // Read into a scratch buffer and build the array from that, rather than
+        // handing `MLXArray` a pointer into the mapping and letting its copy
+        // fault the range in page by page. The extra copy is a memcpy of under
+        // two megabytes; the faults it replaces are trips to storage.
+        let scratch = UnsafeMutableRawBufferPointer.allocate(
+            byteCount: rowBytes, alignment: 16)
+        defer { scratch.deallocate() }
+        try read(offset: offset, into: scratch)
 
         return try array(
-            buffer: buffer, shape: shape, byteCount: rowBytes, dtype: dtype, tensor: name)
+            buffer: UnsafeRawBufferPointer(scratch), shape: shape, byteCount: rowBytes,
+            dtype: dtype, tensor: name)
     }
 
     /// Copies an entire tensor out of the mapping.
