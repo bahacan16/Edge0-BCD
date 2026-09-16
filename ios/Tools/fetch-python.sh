@@ -48,10 +48,25 @@ else
   tar xzf /tmp/pas/support.tar.gz -C /tmp/pas
   # Only the framework is needed; the testbed app and the simulator slice are
   # not, and the simulator slice is half the 168 MB.
+  # Both slices are kept. Deleting the simulator one to save 80 MB left the
+  # xcframework's Info.plist still listing it, and Xcode reads that plist to
+  # resolve which slice to use — the result was `Unable to find module
+  # dependency: 'Python'`, which reads like a missing modulemap and was in fact
+  # a manifest describing a directory that was no longer there. Only the
+  # matching slice is embedded in the app either way, so the cost is CI cache,
+  # not IPA size.
   mv /tmp/pas/Python.xcframework "$ROOT/Python.xcframework"
-  rm -rf "$ROOT/Python.xcframework/ios-arm64_x86_64-simulator"
-  echo "== kept $(du -sh "$ROOT/Python.xcframework" | cut -f1)"
+  echo "== xcframework $(du -sh "$ROOT/Python.xcframework" | cut -f1)"
 fi
+
+echo "== slices declared by Info.plist"
+plutil -p "$ROOT/Python.xcframework/Info.plist" 2>/dev/null \
+  | grep -E 'LibraryIdentifier' || true
+echo "== slices on disk"
+ls -1 "$ROOT/Python.xcframework" | grep -E '^ios' || true
+echo "== modulemap (what `import Python` resolves against)"
+cat "$ROOT/Python.xcframework/ios-arm64/Python.framework/Headers/module.modulemap" 2>/dev/null \
+  || echo "(no modulemap at that path)"
 
 PKGS="$ROOT/Resources/app_packages"
 if [ -d "$PKGS" ] && [ -n "$(ls -A "$PKGS" 2>/dev/null)" ]; then

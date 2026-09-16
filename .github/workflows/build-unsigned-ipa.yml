@@ -33,7 +33,7 @@ jobs:
           path: |
             ios/Python.xcframework
             ios/Resources/app_packages
-          key: edge0-python-3.14-ezdxf103-v1
+          key: edge0-python-3.14-ezdxf103-v2
 
       - name: Fetch Python runtime and packages
         env:
