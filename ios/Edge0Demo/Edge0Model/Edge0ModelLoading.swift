@@ -127,14 +127,23 @@ enum Edge0Storage {
     }
 
     /// True when a directory holds something the loaders can actually use.
-    private static func isUsable(_ directory: URL) -> Bool {
-        guard
-            FileManager.default.fileExists(
-                atPath: directory.appendingPathComponent("config.json").path)
-        else { return false }
+    ///
+    /// Pass `mustMatch` where the directory is not tier-specific: `model_type`
+    /// in config.json is what keeps an 8B checkpoint from being picked up as a
+    /// 35B one when both could be sitting in the same shared folder.
+    private static func isUsable(_ directory: URL, mustMatch tier: Edge0Tier? = nil) -> Bool {
+        let config = directory.appendingPathComponent("config.json")
+        guard FileManager.default.fileExists(atPath: config.path) else { return false }
         let contents =
             (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
-        return contents.contains { $0.hasSuffix(".safetensors") }
+        guard contents.contains(where: { $0.hasSuffix(".safetensors") }) else { return false }
+
+        guard let tier = mustMatch else { return true }
+        guard let data = try? Data(contentsOf: config),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let type = json["model_type"] as? String
+        else { return false }
+        return type == tier.modelType
     }
 
     /// A usable checkpoint at `directory`, or in one of its immediate
@@ -145,22 +154,42 @@ enum Edge0Storage {
     /// deeper than the loader looks. Checking one level down costs a directory
     /// listing and saves a correct-looking drop from reading as "nothing
     /// happened".
-    private static func usableDirectory(at directory: URL) -> URL? {
-        if isUsable(directory) { return directory }
+    private static func usableDirectory(at directory: URL, mustMatch tier: Edge0Tier? = nil)
+        -> URL?
+    {
+        if isUsable(directory, mustMatch: tier) { return directory }
         guard
             let entries = try? FileManager.default.contentsOfDirectory(
                 at: directory, includingPropertiesForKeys: [.isDirectoryKey])
         else { return nil }
         return entries.first { entry in
             (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
-                && isUsable(entry)
+                && isUsable(entry, mustMatch: tier)
         }
+    }
+
+    /// Everywhere a checkpoint plausibly ends up.
+    ///
+    /// The tier's own folder is the documented place, but files copied in over
+    /// USB land wherever the tool that copied them put them — most often the
+    /// Documents root. A mistake there costs a 19 GB transfer to correct, so
+    /// the near misses are searched too. Only the tier's own folder is trusted
+    /// blindly; anywhere shared has to match `model_type`.
+    private static func searchRoots(for tier: Edge0Tier) -> [(url: URL, match: Edge0Tier?)] {
+        let documents = modelsDirectory.deletingLastPathComponent()
+        return [
+            (importedDirectory(for: tier), nil),
+            (modelsDirectory, tier),
+            (documents, tier),
+        ]
     }
 
     /// The checkpoint to load, wherever it came from. An imported copy wins:
     /// the user put it there deliberately.
     static func localDirectory(for tier: Edge0Tier) -> URL? {
-        if let imported = usableDirectory(at: importedDirectory(for: tier)) { return imported }
+        for root in searchRoots(for: tier) {
+            if let found = usableDirectory(at: root.url, mustMatch: root.match) { return found }
+        }
         if let snapshot = snapshotDirectory(for: tier), isUsable(snapshot) { return snapshot }
         return nil
     }
@@ -171,7 +200,8 @@ enum Edge0Storage {
 
     /// True when the tier's files were imported rather than downloaded.
     static func isImported(_ tier: Edge0Tier) -> Bool {
-        usableDirectory(at: importedDirectory(for: tier)) != nil
+        guard let local = localDirectory(for: tier) else { return false }
+        return !local.path.hasPrefix(hubCacheDirectory.path)
     }
 
     /// Bytes occupied by a tier, following the blob store rather than the
