@@ -70,65 +70,16 @@ curl -sSL --max-time 300 -o support.tar.gz "$URL"
 echo "@@@ downloaded: $(du -h support.tar.gz | cut -f1)"
 tar xzf support.tar.gz || { echo "@@@ untar failed"; exit 0; }
 
-echo "@@@ TOP LEVEL"
-ls -1
-echo "@@@ TREE depth 3 (stdlib elided)"
-find . -maxdepth 3 -not -path '*/python-stdlib/*' | sort | head -60
-echo "@@@ XCFRAMEWORK PLIST"
-plutil -p "$(find . -path '*xcframework/Info.plist' | head -1)" 2>/dev/null | head -40
-echo "@@@ MODULEMAPS"
-find . -name '*.modulemap' | head -10
-echo "@@@ Python.h"
-find . -name 'Python.h' | head -3
-echo "@@@ Headers dirs"
-find . -type d -name 'Headers' | head -6
-echo "@@@ STDLIB"
-STD=$(find . -maxdepth 4 -type d -name 'python-stdlib' | head -1)
-echo "dir=$STD  size=$([ -n "$STD" ] && du -sh "$STD" | cut -f1)"
-[ -n "$STD" ] && ls -1 "$STD" | head -25
-echo "@@@ LIB-DYNLOAD"
-find . -type d -name 'lib-dynload' | head -3
-echo "so=$(find . -path '*lib-dynload*' -name '*.so' | wc -l | tr -d ' ')  fw=$(find . -path '*lib-dynload*' -name '*.framework' | wc -l | tr -d ' ')"
-find . -path '*lib-dynload*' \( -name '*.so' -o -name '*.framework' \) | head -25
-echo "@@@ KEY MODULES"
-for m in zlib binascii _struct array math _datetime _decimal _socket _ssl; do
-  h=$(find . \( -name "${m}.*.so" -o -name "${m}.so" -o -name "${m}.framework" \) | head -1)
-  printf '%-10s %s\n' "$m" "${h:-BUILTIN_OR_ABSENT}"
-done
-echo "@@@ PIP"
-find . -maxdepth 8 -type d \( -name ensurepip -o -name pip -o -name site-packages \) | head -6
-echo "@@@ VERSIONS"
-cat VERSIONS 2>/dev/null | head -20
+echo "@@@ ===== utils.sh (the build phase the reference app runs) ====="
+cat ./Python.xcframework/build/utils.sh 2>/dev/null || echo "(not at that path)"
+echo "@@@ ===== end utils.sh ====="
 
-echo "@@@ DEVICE SLICE (ios-arm64) depth 3"
-find ./Python.xcframework/ios-arm64 -maxdepth 3 -not -path '*lib-dynload*' | sort | head -40
-echo "@@@ DEVICE SLICE SIZES"
-du -sh ./Python.xcframework/ios-arm64 ./Python.xcframework/lib 2>/dev/null
-du -sh ./Python.xcframework/ios-arm64/lib-arm64/python3.*/lib-dynload 2>/dev/null
+echo "@@@ ===== build/ directory ====="
+find ./Python.xcframework/build -maxdepth 2 2>/dev/null | head -20
 
-echo "@@@ platform-config"
-find ./Python.xcframework/ios-arm64/platform-config -maxdepth 2 | head -20
+echo "@@@ ===== testbed main.m ====="
+cat ./testbed/iOSTestbed/main.m 2>/dev/null || echo "(missing)"
+echo "@@@ ===== end main.m ====="
 
-# The reference app is the whole point of probing this: it is BeeWare's own
-# answer to the two questions that decide the integration — how the runtime is
-# started, and what happens to two hundred .so files that iOS will not load
-# unless something signs them.
-echo "@@@ TESTBED main.m"
-sed -n '1,120p' ./testbed/iOSTestbed/main.m 2>/dev/null
-
-echo "@@@ TESTBED AppDelegate.m"
-sed -n '1,80p' ./testbed/iOSTestbed/AppDelegate.m 2>/dev/null
-
-echo "@@@ TESTBED build phases and script"
-grep -n -A 30 'shellScript' ./testbed/iOSTestbed.xcodeproj/project.pbxproj 2>/dev/null | head -60
-
-echo "@@@ TESTBED framework/resource refs"
-grep -nE 'Python\.xcframework|python-stdlib|lib-dynload|Frameworks|Embed' \
-  ./testbed/iOSTestbed.xcodeproj/project.pbxproj 2>/dev/null | head -40
-
-echo "@@@ TESTBED Info.plist"
-plutil -p ./testbed/iOSTestbed/iOSTestbed-Info.plist 2>/dev/null | head -30
-
-echo "@@@ TOTAL $(du -sh . | cut -f1)"
 echo "@@@ PROBE END @@@"
 exit 0
