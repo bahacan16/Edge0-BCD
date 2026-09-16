@@ -84,6 +84,10 @@ final class ModelManager {
         downloadedTiers = downloaded
         diskUsage = usage
         freeDiskSpace = Edge0Storage.freeDiskSpace
+        for tier in Edge0Tier.allCases {
+            Edge0Log.write(
+                "depo \(tier.rawValue): \(Edge0Storage.localDirectory(for: tier)?.path ?? "yok")")
+        }
     }
 
     func delete(tier: Edge0Tier) {
@@ -118,6 +122,11 @@ final class ModelManager {
         pendingTier = tier
         lastProgressSample = nil
         smoothedBytesPerSecond = 0
+        Edge0Log.write(
+            "hazırlanıyor: \(tier.rawValue) · LoRA \(settings.useLoRA)"
+                + " · akış \(settings.expertStreaming)"
+                + " · önbellek \(settings.expertCacheBudgetMB) MB")
+        Edge0Log.memory("yükleme öncesi")
         phase = .downloading(fraction: 0, detail: "Bağlanılıyor…")
         // A multi-GB download dies if the screen locks and the app suspends.
         UIApplication.shared.isIdleTimerDisabled = true
@@ -163,14 +172,37 @@ final class ModelManager {
                 self.pendingTier = nil
                 self.phase = .ready
                 self.refreshStorage()
+                Edge0Log.write(
+                    "yüklendi: \(tier.rawValue) · \(result.parameterCount) parametre"
+                        + " · sağlık: \(result.health.detail)")
+                if !result.health.sample.isEmpty {
+                    Edge0Log.write("açılış örneği: \(result.health.sample)")
+                }
+                Edge0Log.memory("yükleme sonrası")
+                // Survived: the next launch may auto-load again.
+                Edge0SafeBoot.clear()
             } catch is CancellationError {
                 guard self?.loadGeneration == generation else { return }
+                Edge0Log.write("yükleme iptal edildi: \(tier.rawValue)")
+                Edge0SafeBoot.clear()
                 self?.phase = .idle
             } catch {
                 guard self?.loadGeneration == generation else { return }
+                Edge0Log.failure("yükleme \(tier.rawValue)", error)
+                // A clean failure is not a crash, so it must not disarm the
+                // next auto-load — the error is on screen to act on.
+                Edge0SafeBoot.clear()
                 self?.phase = .failed(error.localizedDescription)
             }
         }
+    }
+
+    /// Surfaced when safe boot skipped the automatic load.
+    func reportAutoLoadSkipped() {
+        phase = .failed(
+            "Önceki açılışta model yüklenirken uygulama kapandı, bu yüzden otomatik"
+                + " yükleme atlandı. Yüklemeyi kendin başlatabilir ya da Ayarlar'dan"
+                + " otomatik yüklemeyi kapatabilirsin.")
     }
 
     /// Copies a checkpoint the user already has into the app's storage, then

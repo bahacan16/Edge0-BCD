@@ -35,7 +35,26 @@ struct RootView: View {
             // already downloaded — this never starts a download.
             guard settings.autoLoadLastModel, models.phase == .idle, models.loaded == nil,
                 models.downloadedTiers.contains(settings.selectedTier)
-            else { return }
+            else {
+                Edge0Log.write(
+                    "otomatik yükleme atlandı (açık: \(settings.autoLoadLastModel),"
+                        + " indirilmiş: \(models.downloadedTiers.map(\.rawValue)))")
+                return
+            }
+
+            // Loading at launch turns any crash during a load into a boot loop
+            // the user cannot get out of: the app dies before it can draw the
+            // button that would have turned this off. If the last launch did
+            // not survive its own auto-load, sit this one out.
+            if Edge0SafeBoot.lastAutoLoadCrashed {
+                Edge0SafeBoot.clear()
+                Edge0Log.write("otomatik yükleme atlandı — önceki açılışta çökme tespit edildi")
+                models.reportAutoLoadSkipped()
+                return
+            }
+
+            Edge0Log.write("otomatik yükleme: \(settings.selectedTier.rawValue)")
+            Edge0SafeBoot.markAutoLoadStarted()
             models.prepare(tier: settings.selectedTier, settings: settings)
         }
     }

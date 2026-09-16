@@ -101,6 +101,15 @@ Klasörde şunlar olmalı:
 | `lora_edge0_35b.safetensors` | **Evet** — Recover-LoRA; olmazsa kalite düşer |
 | `prerouter_edge0_35b.safetensors` | **Hayır** — bu uygulama prerouter'ı kullanmıyor, kopyalanmaz |
 
+### Günlük
+
+Uygulama her açılışta `Documents/Edge0.log` dosyasına yazar — Dosyalar
+uygulamasında *Bu iPhone'da → Edge0 Demo → Edge0.log*, ya da Ayarlar'daki
+*Günlük dosyasını paylaş* düğmesiyle. Her satır anında diske yazılır, çünkü bu
+uygulamanın en olası ölüm şekli jetsam'in belleği aştığı için süreci
+öldürmesi: bu SIGKILL'dir, yakalanamaz, ardında hiçbir çökme raporu bırakmaz.
+Geriye yalnızca diske ulaşmış satırlar kalır, o yüzden son satır delildir.
+
 ### Bellek
 
 35B'nin expert önbelleği **MB cinsinden** ayarlanır, katman başına expert

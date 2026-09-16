@@ -205,6 +205,19 @@ struct SettingsView: View {
                 "MLX Swift",
                 destination: URL(string: "https://github.com/ml-explore/mlx-swift")!)
 
+            ShareLink(item: Edge0Log.fileURL) {
+                Label("Günlük dosyasını paylaş", systemImage: "doc.text")
+            }
+            Button(role: .destructive) {
+                Edge0Log.clear()
+            } label: {
+                Label("Günlüğü temizle", systemImage: "trash")
+            }
+            Text("Günlük: Dosyalar → Bu iPhone'da → Edge0 Demo → Edge0.log")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+
             Button {
                 UIPasteboard.general.string = diagnostics
                 copiedDiagnostics = true

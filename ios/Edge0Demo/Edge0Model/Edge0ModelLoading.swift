@@ -364,6 +364,7 @@ enum Edge0Loader {
         onProgress: @escaping @Sendable (Progress) -> Void,
         onRetry: @escaping @Sendable (Int, Int, Error) -> Void = { _, _, _ in }
     ) async throws -> Edge0LoadedModel {
+        Edge0Log.write("Edge0Loader.load başladı: \(tier.rawValue)")
         await registerModelTypes()
 
         // A phone has no memory to spare for MLX's buffer cache.
@@ -382,6 +383,9 @@ enum Edge0Loader {
                 useLatest: false, progressHandler: onProgress)
             directory = resolved.modelDirectory
         }
+
+        Edge0Log.write("model dizini: \(directory.path)")
+        Edge0Log.memory("dizin çözümlendi")
 
         let loraURL = directory.appendingPathComponent(tier.loraFileName)
         let container: ModelContainer
@@ -411,6 +415,10 @@ enum Edge0Loader {
                 }
             }
         }
+
+        Edge0Log.write("ağırlıklar yüklendi")
+        Edge0Log.memory("ağırlıklar sonrası")
+        if let report { Edge0Log.write("LoRA: \(report.summary)") }
 
         let parameterCount = await container.perform { context in
             context.model.numParameters()
