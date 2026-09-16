@@ -67,6 +67,11 @@ final class ModelManager {
             forName: UIApplication.didReceiveMemoryWarningNotification,
             object: nil, queue: .main
         ) { _ in
+            // Logged because a purge is invisible from the outside and looks
+            // exactly like the model having got slower for no reason: every
+            // expert is a miss again until the caches refill. If these show up
+            // in a run, the cache budget is the thing to look at, not the code.
+            Edge0Log.memory("bellek uyarısı — expert önbellekleri boşaltılıyor")
             MLX.GPU.clearCache()
             Edge0ExpertCaches.purge()
         }

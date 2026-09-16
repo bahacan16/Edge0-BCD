@@ -57,6 +57,31 @@ enum Edge0Meter {
         lock.withLock { (_expertSeconds, _stageSeconds, _prefetchSeconds, _prefetchedRanges) }
     }
 
+    /// One line saying where the time went and how well the cache did.
+    ///
+    /// Both halves belong together: expert-read time without the hit rate says
+    /// how long the reads took but not whether they should have happened at
+    /// all, and a prefetch that reads a lot while the hit rate stays flat is
+    /// the signature of speculative work that is not paying for itself.
+    static func report(prerouter: Bool) -> String {
+        let meter = snapshot
+        var line = String(
+            format:
+                "zaman: expert okuma %.2f sn · prerouter başları %.2f sn"
+                + " · önden okuma %.2f sn (%d aralık) · prerouter %@",
+            meter.expert, meter.stage, meter.prefetch, meter.ranges,
+            prerouter ? "açık" : "kapalı")
+
+        let statistics = Edge0ExpertCaches.statistics
+        let total = statistics.hits + statistics.misses
+        if total > 0 {
+            line += String(
+                format: " · isabet %%%.0f (%d/%d)",
+                Double(statistics.hits) / Double(total) * 100, statistics.hits, total)
+        }
+        return line
+    }
+
     /// Runs `body`, adding its wall time to `counter`.
     @inline(__always)
     static func measure<T>(_ counter: (Double) -> Void, _ body: () throws -> T) rethrows -> T {

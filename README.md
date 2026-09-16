@@ -99,7 +99,7 @@ Klasörde şunlar olmalı:
 | `chat_template.jinja` | **Evet** — sohbet şablonu ayrı dosyada; onsuz cevaplar bozulur |
 | `generation_config.json` | varsa kopyalanır |
 | `lora_edge0_35b.safetensors` | **Evet** — Recover-LoRA; olmazsa kalite düşer |
-| `prerouter_edge0_35b.safetensors` | **Evet** — hız için; aşağıya bakın |
+| `prerouter_edge0_35b.safetensors` | İsteğe bağlı — prerouter anahtarı için; aşağıya bakın |
 
 ### Prerouter
 
@@ -117,9 +117,15 @@ kullanır, yani önceden okunan expert'ler tam olarak çalışacak olanlardır.
 İkincisi bir optimizasyon değil, birincisini doğru kılan şeydir — ve edge0'ın
 Recover-LoRA'sının neden prerouter devredeyken eğitildiğinin de cevabıdır.
 
-`prerouter_edge0_35b.safetensors` (≈138 MB) model klasöründe yoksa uygulama
-yine çalışır, sadece her katman kendi kapısını sorar ve okumaları tek tek
-bekler. Ayarlar → Çalışma zamanı altındaki anahtarla kapatılabilir.
+**Şu an varsayılan olarak kapalı, çünkü ölçümde yavaş.** Aynı sabit iş
+(sağlık denemesi: aynı istem, 12 token) kapılı yönlendirmeyle 11,9 sn,
+prerouter açıkken 27,0 sn — üstelik expert önbelleği hızlı koşudakinden daha
+büyükken. Tahminin kendisi doğru görünüyor; sorun ondan sonrasında: katman
+tahmine göre önden okunan expert'leri *tüketmiyor*, kendi okumasını baştan
+yapıyor. Yani önden okuma işi hafifletmiyor, ikinci kez yaptırıyor. edge0'ın
+Python tarafında katman staged tamponu bekler; bu portta o devir teslim henüz
+yok. Anahtar Ayarlar → Çalışma zamanı altında; açıp kapatıp logdaki `zaman:`
+satırını karşılaştırabilirsiniz.
 
 8B katmanında prerouter portlanmadı: oradaki başlar Ling'in kendi MoE bloğunun
 içinde tüketiliyor (sigmoid grup-sınırlı seçim), dışarıdan yönlendirmeyi

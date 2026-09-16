@@ -439,6 +439,8 @@ enum Edge0Loader {
 
         // One token through the model: a shape or dtype slip in the port shows
         // up here as NaN logits instead of as gibberish an hour later.
+        Edge0Meter.reset()
+        Edge0ExpertCaches.resetStatistics()
         let healthStarted = Date.timeIntervalSinceReferenceDate
         let health = await container.perform { context in
             Edge0ModelHealth.check(model: context.model, tokenizer: context.tokenizer)
@@ -451,6 +453,10 @@ enum Edge0Loader {
             String(
                 format: "sağlık denemesi: %.1f sn (aynı istem, 12 token)",
                 Date.timeIntervalSinceReferenceDate - healthStarted))
+        // The breakdown goes here rather than only after a chat turn, because
+        // this run is the comparable one: same prompt, same twelve greedy
+        // tokens, every load. A setting can be judged from a load alone.
+        Edge0Log.write(Edge0Meter.report(prerouter: usePrerouter))
         guard health.passed else { throw Edge0HealthError.failed(health.detail) }
 
         return Edge0LoadedModel(

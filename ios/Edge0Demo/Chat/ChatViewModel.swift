@@ -272,14 +272,7 @@ final class ChatViewModel {
 
         // The breakdown, because tokens per second moves for several reasons at
         // once and this is the only way to tell which one moved.
-        let meter = Edge0Meter.snapshot
-        Edge0Log.write(
-            String(
-                format:
-                    "zaman: expert okuma %.2f sn · prerouter başları %.2f sn"
-                    + " · önden okuma %.2f sn (%d aralık) · prerouter %@",
-                meter.expert, meter.stage, meter.prefetch, meter.ranges,
-                settings.usePrerouter ? "açık" : "kapalı"))
+        Edge0Log.write(Edge0Meter.report(prerouter: settings.usePrerouter))
     }
 
     /// Position of the message being streamed into, or nil if the transcript

@@ -29,11 +29,16 @@ final class AppSettings {
     }
 
     /// Use edge0's trained prerouter: each layer predicts the next layer's
-    /// routing one token ahead, so the experts for a whole step can be read
-    /// from storage in parallel while the previous step finishes. It also
-    /// *supplies* the routing at decode, which is the configuration the
-    /// Recover-LoRA was trained in. Off = every layer asks its own gate and
-    /// waits for the reads, one layer at a time.
+    /// routing one token ahead and supplies it, which is the configuration the
+    /// Recover-LoRA was trained in.
+    ///
+    /// Off by default, and measured rather than assumed: on this device the
+    /// port is currently *slower* than plain gate routing — 27.0 s against
+    /// 11.9 s on the fixed health-check workload, with a larger expert cache
+    /// than the faster run had. The prediction is sound; the read it enables is
+    /// not yet a saving, because the layer still does its own read afterwards
+    /// instead of consuming what was fetched for it. Until that handoff exists,
+    /// this switch is for measuring, not for speed.
     var usePrerouter: Bool {
         didSet { store(usePrerouter, "usePrerouter") }
     }
@@ -112,7 +117,7 @@ final class AppSettings {
             d.object(forKey: Self.key("expertCacheBudgetMB")) as? Int
             ?? Self.defaultExpertCacheBudgetMB
 
-        usePrerouter = d.object(forKey: Self.key("usePrerouter")) as? Bool ?? true
+        usePrerouter = d.object(forKey: Self.key("usePrerouter")) as? Bool ?? false
         autoLoadLastModel = d.object(forKey: Self.key("autoLoadLastModel")) as? Bool ?? true
 
         temperature = d.object(forKey: Self.key("temperature")) as? Double

@@ -163,9 +163,11 @@ struct SettingsView: View {
                 prerouterTier.prerouterFileName == nil
                     ? "Bu katman için prerouter portu yok; kapılarla çalışır."
                     : "Her katman bir sonrakinin yönlendirmesini bir token önceden"
-                        + " tahmin eder, böylece bir adımın bütün expert'leri"
-                        + " diskten aynı anda okunur. Recover-LoRA da bu kurulum"
-                        + " için eğitildi. Değişiklik bir sonraki yüklemede geçerli olur."
+                        + " tahmin eder. Şu an ölçümde kapılı çalışmadan YAVAŞ:"
+                        + " tahmin doğru, ama katman yine de kendi okumasını"
+                        + " yapıyor, yani önden okunan iş ikinci kez yapılıyor."
+                        + " Açıp kapatıp logdaki \"zaman:\" satırını karşılaştırın."
+                        + " Değişiklik bir sonraki yüklemede geçerli olur."
             )
             .font(.caption)
             .foregroundStyle(.secondary)
