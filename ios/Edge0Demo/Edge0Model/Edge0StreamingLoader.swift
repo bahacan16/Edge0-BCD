@@ -111,8 +111,11 @@ enum Edge0StreamingLoader {
             throw Edge0StreamingLoaderError.noExpertTensors(directory.lastPathComponent)
         }
 
+        Edge0Log.write("akıtmalı expert katmanı kuruldu: \(installed) blok")
+
         // Safe now, and only now: the placeholder expert weights are gone.
         eval(model)
+        Edge0Log.write("model değerlendirildi")
 
         // 4. LoRA, tokenizer, processor — as the stock factory would.
         var report: Edge0LoRAReport?
@@ -163,12 +166,18 @@ enum Edge0StreamingLoader {
         let slots = min(64, max(2, budgetBytes / max(1, blocks.count * perExpert)))
 
         for (block, names) in blocks {
-            block.switchMLP = Edge0StreamingSwitchGLU(
+            let streaming = Edge0StreamingSwitchGLU(
                 shards: shards,
                 names: names,
                 quantization: ExpertQuantization(groupSize: groupSize, bits: bits),
                 hotSlots: slots
             )
+            // NOT `block.switchMLP = streaming`. @ModuleInfo's setter traps
+            // outright once the property holds a value — assigning through it
+            // would leave Module's own child cache pointing at the layer that
+            // was replaced. `update(modules:)` is the supported route, and the
+            // key is the one @ModuleInfo was declared with.
+            block.update(modules: .unflattened([("switch_mlp", streaming)]))
         }
         return blocks.count
     }

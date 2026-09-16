@@ -88,10 +88,16 @@ enum Edge0Importer {
 
         let files = try collect(from: sources)
         guard !files.isEmpty else { throw Edge0ImportError.nothingSelected }
-        guard files.contains(where: { $0.name == "config.json" }) else {
-            throw Edge0ImportError.missingConfig
-        }
-        guard files.contains(where: { $0.name.hasSuffix(".safetensors") }) else {
+
+        // What has to end up present is the union of the selection and what is
+        // already in the folder, so that adding one missing file to a complete
+        // checkpoint is allowed rather than rejected for not being one itself.
+        let existing = Set(
+            (try? FileManager.default.contentsOfDirectory(
+                atPath: Edge0Storage.importedDirectory(for: tier).path)) ?? [])
+        let resulting = existing.union(files.map(\.name))
+        guard resulting.contains("config.json") else { throw Edge0ImportError.missingConfig }
+        guard resulting.contains(where: { $0.hasSuffix(".safetensors") }) else {
             throw Edge0ImportError.noWeights
         }
 
@@ -124,10 +130,17 @@ enum Edge0Importer {
             throw error
         }
 
-        try? manager.removeItem(at: destination)
-        try manager.createDirectory(
-            at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try manager.moveItem(at: staging, to: destination)
+        // Merged file by file rather than replacing the folder wholesale.
+        // Importing a subset — a chat template, a re-downloaded shard — would
+        // otherwise delete everything already there, and "everything already
+        // there" is a 19 GB transfer.
+        try manager.createDirectory(at: destination, withIntermediateDirectories: true)
+        for file in files {
+            let target = destination.appendingPathComponent(file.name)
+            try? manager.removeItem(at: target)
+            try manager.moveItem(at: staging.appendingPathComponent(file.name), to: target)
+        }
+        try? manager.removeItem(at: staging)
         return destination
     }
 
