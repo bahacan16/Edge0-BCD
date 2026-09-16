@@ -348,7 +348,9 @@ final class ModelManager {
         return smoothedBytesPerSecond
     }
 
-    static func formatDuration(_ seconds: Double) -> String {
+    /// Pure formatters, so they stay callable from error descriptions and
+    /// other nonisolated contexts.
+    nonisolated static func formatDuration(_ seconds: Double) -> String {
         let total = Int(seconds.rounded())
         if total < 60 { return "\(total) sn" }
         let minutes = total / 60
@@ -372,7 +374,7 @@ final class ModelManager {
 
     static var mlxPeakMemoryBytes: Int64 { Int64(MLX.GPU.peakMemory) }
 
-    static func formatBytes(_ bytes: Int64) -> String {
+    nonisolated static func formatBytes(_ bytes: Int64) -> String {
         let formatter = ByteCountFormatter()
         formatter.allowedUnits = [.useMB, .useGB]
         formatter.countStyle = .file
