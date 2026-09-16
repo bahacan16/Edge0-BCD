@@ -273,6 +273,14 @@ enum Edge0ExpertCaches {
 /// The superclass is initialized with 1×1×1 placeholder projections so it never
 /// allocates the full expert tensors; every forward pass goes through the
 /// override below, which never touches them.
+///
+/// - Important: this hinges on `E0Qwen35SparseMoeBlock` calling
+///   `switchMLP(x, inds)`, which is what the vendored 3.31.4 copy does. Later
+///   mlx-swift-lm versions route through `callAndWeightedReduce` instead, and
+///   an override that no longer matches the call site is not a compile error —
+///   the block would quietly run the placeholder projections. Anyone
+///   re-vendoring Vendor/Edge0Qwen35.swift from a newer release has to check
+///   which entry point the block calls and override that one.
 final class Edge0StreamingSwitchGLU: E0SwitchGLU {
     private let pool: ExpertSlotPool
     private let quantization: ExpertQuantization
