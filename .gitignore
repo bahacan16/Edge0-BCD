@@ -19,3 +19,8 @@ artifacts/
 # Bench / runtime logs
 *.log
 scripts/alignment_results.json
+
+# Fetched by ios/Tools/fetch-python.sh in CI and cached there; 168 MB of
+# runtime and a few megabytes of wheels have no business in the repository.
+ios/Python.xcframework/
+ios/Resources/app_packages/

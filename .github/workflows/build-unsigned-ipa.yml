@@ -24,6 +24,22 @@ jobs:
           sudo xcode-select -s "$LATEST_XCODE"
           xcodebuild -version
 
+      # 168 MB and three wheels; cached so only the first build after a
+      # version bump pays for it.
+      - name: Cache Python runtime
+        id: python-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ios/Python.xcframework
+            ios/Resources/app_packages
+          key: edge0-python-3.14-ezdxf103-v1
+
+      - name: Fetch Python runtime and packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash ios/Tools/fetch-python.sh
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
@@ -119,16 +135,3 @@ jobs:
           name: Edge0Demo-unsigned-ipa
           path: ios/Edge0Demo-unsigned.ipa
           retention-days: 14
-
-      # Last on purpose: job logs are read from the end, and this behind the
-      # Swift build output could not be retrieved at all. It cannot fail the
-      # job either — reconnaissance that breaks a working build is worse than
-      # no reconnaissance.
-      - name: Probe Python-Apple-support layout
-        continue-on-error: true
-        env:
-          # Unauthenticated, the runner's shared egress IP is already over
-          # GitHub's anonymous API limit — the first attempt came back
-          # "rate limit exceeded" and looked exactly like "no releases found".
-          GH_TOKEN: ${{ github.token }}
-        run: bash ios/Tools/probe-python-support.sh

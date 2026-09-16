@@ -10,6 +10,7 @@ struct SettingsView: View {
     @FocusState private var promptFocused: Bool
     @State private var toolReport: Edge0ToolProbeReport?
     @State private var probing = false
+    @State private var pythonReport: String?
 
     private let timer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
@@ -23,6 +24,7 @@ struct SettingsView: View {
                 conversationSection($settings)
                 runtimeSection($settings)
                 toolSection
+                pythonSection
                 interfaceSection($settings)
                 aboutSection
             }
@@ -310,6 +312,39 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    /// Whether the embedded interpreter comes up at all, answered on the
+    /// device because nothing else can answer it.
+    @ViewBuilder
+    private var pythonSection: some View {
+        Section("Python") {
+            Button {
+                pythonReport = "Çalışıyor…"
+                Task.detached {
+                    let report = Edge0Python.selfTest()
+                    Edge0Log.write("python kendi testi:\n" + report)
+                    await MainActor.run { pythonReport = report }
+                }
+            } label: {
+                Label("Python'u sına", systemImage: "terminal")
+            }
+
+            if let pythonReport {
+                Text(pythonReport)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+
+            Text(
+                "Gömülü CPython'u başlatır, uzantı modüllerinin framework'lerinden"
+                    + " yüklenip yüklenmediğine bakar ve ezdxf ile bir çizim yazıp"
+                    + " geri okur. Sonuç günlüğe de yazılır."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 

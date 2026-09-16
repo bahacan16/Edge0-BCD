@@ -53,10 +53,28 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: Edge0Demo
+      # The pure-Python packages the app ships with, copied in whole. A folder
+      # reference rather than a group: these are hundreds of files whose names
+      # the interpreter resolves at runtime, not sources to compile.
+      - path: Resources/app_packages
+        type: folder
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.bahacan16.edge0demo
+        # Where the extension modules end up once the build phase turns each
+        # one into a framework.
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
+    postBuildScripts:
+      - name: Install Python runtime
+        basedOnDependencyAnalysis: false
+        script: bash "$PROJECT_DIR/Tools/install-python.sh" Python.xcframework app_packages
     dependencies:
+      # Linked and embedded. `RemoveHeadersOnCopy` matters: the framework
+      # carries its own headers and a bundle that ships them is rejected.
+      - framework: Python.xcframework
+        embed: true
+        codeSign: false
       - package: MLXSwiftLM
         product: MLXLLM
       - package: MLXSwiftLM
