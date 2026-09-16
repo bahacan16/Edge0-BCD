@@ -437,9 +437,11 @@ final class ModelManager {
     /// fraction depends on entitlements and on what else the phone is doing.
     static var availableProcessMemoryBytes: Int64 { Int64(os_proc_available_memory()) }
 
-    static var mlxActiveMemoryBytes: Int64 { Int64(MLX.GPU.activeMemory) }
+    // Reads of MLX's own counters, with no actor state behind them — and the
+    // run report that wants them is written off the main actor.
+    nonisolated static var mlxActiveMemoryBytes: Int64 { Int64(MLX.GPU.activeMemory) }
 
-    static var mlxPeakMemoryBytes: Int64 { Int64(MLX.GPU.peakMemory) }
+    nonisolated static var mlxPeakMemoryBytes: Int64 { Int64(MLX.GPU.peakMemory) }
 
     nonisolated static func formatBytes(_ bytes: Int64) -> String {
         let formatter = ByteCountFormatter()
