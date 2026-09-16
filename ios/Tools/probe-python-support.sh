@@ -97,6 +97,38 @@ for m in zlib binascii _struct array math _datetime _decimal _socket _ssl; do
 done
 echo "@@@ PIP"
 find . -maxdepth 8 -type d \( -name ensurepip -o -name pip -o -name site-packages \) | head -6
+echo "@@@ VERSIONS"
+cat VERSIONS 2>/dev/null | head -20
+
+echo "@@@ DEVICE SLICE (ios-arm64) depth 3"
+find ./Python.xcframework/ios-arm64 -maxdepth 3 -not -path '*lib-dynload*' | sort | head -40
+echo "@@@ DEVICE SLICE SIZES"
+du -sh ./Python.xcframework/ios-arm64 ./Python.xcframework/lib 2>/dev/null
+du -sh ./Python.xcframework/ios-arm64/lib-arm64/python3.*/lib-dynload 2>/dev/null
+
+echo "@@@ platform-config"
+find ./Python.xcframework/ios-arm64/platform-config -maxdepth 2 | head -20
+
+# The reference app is the whole point of probing this: it is BeeWare's own
+# answer to the two questions that decide the integration — how the runtime is
+# started, and what happens to two hundred .so files that iOS will not load
+# unless something signs them.
+echo "@@@ TESTBED main.m"
+sed -n '1,120p' ./testbed/iOSTestbed/main.m 2>/dev/null
+
+echo "@@@ TESTBED AppDelegate.m"
+sed -n '1,80p' ./testbed/iOSTestbed/AppDelegate.m 2>/dev/null
+
+echo "@@@ TESTBED build phases and script"
+grep -n -A 30 'shellScript' ./testbed/iOSTestbed.xcodeproj/project.pbxproj 2>/dev/null | head -60
+
+echo "@@@ TESTBED framework/resource refs"
+grep -nE 'Python\.xcframework|python-stdlib|lib-dynload|Frameworks|Embed' \
+  ./testbed/iOSTestbed.xcodeproj/project.pbxproj 2>/dev/null | head -40
+
+echo "@@@ TESTBED Info.plist"
+plutil -p ./testbed/iOSTestbed/iOSTestbed-Info.plist 2>/dev/null | head -30
+
 echo "@@@ TOTAL $(du -sh . | cut -f1)"
 echo "@@@ PROBE END @@@"
 exit 0
