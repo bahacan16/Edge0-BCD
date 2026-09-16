@@ -17,6 +17,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # One cheap reconnaissance run before any of this is built against, and
+      # it cannot fail the job. See the script for why.
+      - name: Probe Python-Apple-support layout
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash ios/Tools/probe-python-support.sh
+
       - name: Select latest available Xcode
         run: |
           LATEST_XCODE=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
