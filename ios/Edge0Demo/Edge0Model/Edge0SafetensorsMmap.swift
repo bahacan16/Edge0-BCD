@@ -137,6 +137,28 @@ final class SafetensorsMmap {
             MADV_WILLNEED)
     }
 
+    /// Forces a byte range resident by touching one byte per page.
+    ///
+    /// `MADV_WILLNEED` is advisory and returns immediately, which is no help
+    /// when the very next thing the caller does is read the range — the fault
+    /// still happens then, synchronously, one page at a time. Touching the
+    /// pages deliberately means it can be done from several threads at once,
+    /// which is the only way to get more than one read in flight on a device
+    /// that is perfectly capable of serving many.
+    @discardableResult
+    func fault(offset: Int, byteCount: Int) -> Int {
+        guard byteCount > 0, offset >= 0, offset + byteCount <= length else { return 0 }
+        let page = Int(getpagesize())
+        var cursor = (offset / page) * page
+        let end = min(length, offset + byteCount)
+        var total = 0
+        while cursor < end {
+            total &+= Int(base.load(fromByteOffset: cursor, as: UInt8.self))
+            cursor += page
+        }
+        return total
+    }
+
     /// A raw pointer into the mapping. Only valid while this object is alive.
     func rawPointer(offset: Int, byteCount: Int) throws -> UnsafeRawBufferPointer {
         guard offset >= 0, byteCount >= 0, offset + byteCount <= length else {

@@ -152,14 +152,38 @@ final class ExpertSlotPool {
         return try? read(tensor, expert: expert)
     }
 
-    /// Hints the kernel to page in every byte range this expert needs.
-    func prefetch(expert: Int32) {
-        for tensor in [names.gateWeight, names.upWeight, names.downWeight] {
-            guard let shard = shards.shard(for: tensor), let entry = shard.entries[tensor],
-                let leading = entry.shape.first, leading > 0
-            else { continue }
-            let rowBytes = entry.byteCount / leading
-            shard.prefetch(offset: entry.offset + Int(expert) * rowBytes, byteCount: rowBytes)
+    /// Whether an expert is already in memory, so callers can skip the work of
+    /// paging in one that is.
+    func isCached(_ expert: Int32) -> Bool {
+        lock.withLock { cache[expert] != nil }
+    }
+
+    /// Brings every byte these experts need into memory, several at a time.
+    ///
+    /// This is where the streaming tier's decode speed is won or lost. Each
+    /// expert is about 1.7 MB of contiguous file, which the device can serve
+    /// quickly — but faulting them in one after another turns forty layers of
+    /// four experts into a chain of hundreds of round trips per token, and the
+    /// measured result is a fraction of what the storage can do. Only POSIX
+    /// work happens here; MLX is never touched off the main path.
+    func warm(experts: [Int32]) {
+        let ranges = experts.flatMap { expert in
+            [names.gateWeight, names.upWeight, names.downWeight].compactMap {
+                tensor -> (SafetensorsMmap, Int, Int)? in
+                guard let shard = shards.shard(for: tensor), let entry = shard.entries[tensor],
+                    let leading = entry.shape.first, leading > 0
+                else { return nil }
+                let rowBytes = entry.byteCount / leading
+                return (shard, entry.offset + Int(expert) * rowBytes, rowBytes)
+            }
+        }
+        guard ranges.count > 1 else {
+            for range in ranges { range.0.fault(offset: range.1, byteCount: range.2) }
+            return
+        }
+        DispatchQueue.concurrentPerform(iterations: ranges.count) { index in
+            let range = ranges[index]
+            range.0.fault(offset: range.1, byteCount: range.2)
         }
     }
 
@@ -378,10 +402,10 @@ final class Edge0StreamingSwitchGLU: E0SwitchGLU {
         if let cached = lastSlots, cached.key == experts {
             return cached.slots
         }
-        // Only worth hinting the kernel once the memo has actually missed:
-        // consecutive tokens usually route to the same set, and paging in
-        // weights that are already resident is pure work.
-        for expert in experts { pool.prefetch(expert: expert) }
+        // Only worth paging in once the memo has actually missed, and only the
+        // experts that are not already cached — the rest are in memory.
+        let cold = experts.filter { !pool.isCached($0) }
+        if !cold.isEmpty { pool.warm(experts: cold) }
         var slices: [ExpertSlice] = []
         slices.reserveCapacity(experts.count)
         for expert in experts {
