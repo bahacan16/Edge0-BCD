@@ -139,25 +139,13 @@ jobs:
       # Runs even when the build fails: a Swift compile error aborts before
       # any post-build phase, and the fetch step's output is unreachable at
       # the top of a log that can only be read from the end.
-      - name: Report Python framework layout
+      # Short on purpose, and last. The module map dump that used to live here
+      # is two hundred `exclude header` lines, which pushed the one thing worth
+      # reading out of the window a job log comes back in. Its question is
+      # answered; this one's is not.
+      - name: Report Python packaging
         if: always()
         run: |
           set +e
-          FW=ios/Python.xcframework/ios-arm64/Python.framework
-          echo "== install-python report"
           cat ios/python-install-report.txt 2>/dev/null || echo "(no report written)"
-          echo "== framework tree"
-          find "$FW" -maxdepth 2 -not -path '*/Headers/*' | head -30
-          echo "== Modules/module.modulemap"
-          cat "$FW/Modules/module.modulemap" 2>/dev/null || echo "(absent)"
-          echo "== Headers/module.modulemap"
-          cat "$FW/Headers/module.modulemap" 2>/dev/null || echo "(absent)"
-          echo "== xcframework Info.plist slices"
-          plutil -p ios/Python.xcframework/Info.plist 2>/dev/null | grep LibraryIdentifier
-          echo "== FRAMEWORK_SEARCH_PATHS in the generated project"
-          grep -o 'FRAMEWORK_SEARCH_PATHS[^;]*;' ios/Edge0Demo.xcodeproj/project.pbxproj \
-            | sort -u | head -10
-          echo "== xcframework refs in the generated project"
-          grep -o 'Python.xcframework[^;]*;' ios/Edge0Demo.xcodeproj/project.pbxproj \
-            | sort -u | head -10
           exit 0
