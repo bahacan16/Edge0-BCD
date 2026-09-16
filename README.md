@@ -96,7 +96,8 @@ Klasörde şunlar olmalı:
 | `config.json` | **Evet** — mimari ve quantization bilgisi |
 | `model-*.safetensors` (+ `model.safetensors.index.json`) | **Evet** |
 | `tokenizer.json`, `tokenizer_config.json` | **Evet** |
-| `generation_config.json`, chat template (`*.jinja`) | varsa kopyalanır |
+| `chat_template.jinja` | **Evet** — sohbet şablonu ayrı dosyada; onsuz cevaplar bozulur |
+| `generation_config.json` | varsa kopyalanır |
 | `lora_edge0_35b.safetensors` | **Evet** — Recover-LoRA; olmazsa kalite düşer |
 | `prerouter_edge0_35b.safetensors` | **Hayır** — bu uygulama prerouter'ı kullanmıyor, kopyalanmaz |
 

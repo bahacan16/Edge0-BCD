@@ -315,11 +315,18 @@ struct Edge0Downloader: Downloader {
 enum Edge0LoadError: LocalizedError {
     case invalidRepositoryID(String)
     case missingWeights(String)
+    case missingChatTemplate
 
     var errorDescription: String? {
         switch self {
         case .invalidRepositoryID(let id): "Geçersiz Hugging Face deposu: \(id)"
         case .missingWeights(let path): "Model dosyaları bulunamadı: \(path)"
+        case .missingChatTemplate:
+            """
+            Sohbet şablonu yok. Depodaki chat_template.jinja dosyasını da model \
+            klasörüne kopyalayın — onsuz model yüklenir ama sohbet biçimi \
+            bozuk olur ve cevaplar kötüleşir.
+            """
         }
     }
 }
@@ -386,7 +393,7 @@ enum Edge0Loader {
             let loaded = try await Edge0StreamingLoader.load(
                 tier: tier,
                 directory: directory,
-                tokenizerLoader: #huggingFaceTokenizerLoader(),
+                tokenizerLoader: Edge0TokenizerLoader(),
                 expertCacheBudgetBytes: expertCacheBudgetMB * 1024 * 1024,
                 loraURL: applyLoRA ? loraURL : nil
             )
@@ -395,7 +402,7 @@ enum Edge0Loader {
         } else {
             container = try await LLMModelFactory.shared.loadContainer(
                 from: directory,
-                using: #huggingFaceTokenizerLoader())
+                using: Edge0TokenizerLoader())
 
             if applyLoRA, FileManager.default.fileExists(atPath: loraURL.path) {
                 report = try await container.perform { context in
@@ -408,6 +415,15 @@ enum Edge0Loader {
         let parameterCount = await container.perform { context in
             context.model.numParameters()
         }
+
+        // Without a chat template an instruction-tuned model is handed an
+        // unformatted transcript and has no turn to answer into. It would load
+        // and generate, badly, with nothing pointing at the cause — and the
+        // remedy is one 8 kB file, so this is worth refusing to load over.
+        let templated = await container.perform { context in
+            (context.tokenizer as? Edge0Tokenizer)?.hasChatTemplate ?? true
+        }
+        guard templated else { throw Edge0LoadError.missingChatTemplate }
 
         // One token through the model: a shape or dtype slip in the port shows
         // up here as NaN logits instead of as gibberish an hour later.
