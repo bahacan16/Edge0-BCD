@@ -237,6 +237,17 @@ private struct TierCard: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(Theme.danger)
             }
+            if !isDownloaded {
+                // Files can be dropped straight in from Finder or the Files
+                // app, which skips the document picker entirely.
+                Label(
+                    "Dosyalar → Bu iPhone'da → \(Edge0Storage.displayPath(for: tier))",
+                    systemImage: "folder"
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            }
             if !models.hasMemoryHeadroom(for: tier) {
                 // A warning, not a block: the budget moves around, and the
                 // expert cache can be turned down to make room.

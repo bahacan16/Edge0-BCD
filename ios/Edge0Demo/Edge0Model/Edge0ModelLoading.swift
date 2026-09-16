@@ -20,23 +20,79 @@ import Tokenizers
 // MARK: - Storage
 
 enum Edge0Storage {
-    /// Root of the on-device model store.
+    /// Root of the on-device model store, inside Documents.
+    ///
+    /// Documents rather than Application Support because the app declares
+    /// `UIFileSharingEnabled`: this is the one directory that shows up in the
+    /// Files app and in Finder, which is what makes a checkpoint something the
+    /// user can put there, inspect and delete themselves.
     static let modelsDirectory: URL = {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-            .first ?? FileManager.default.temporaryDirectory
-        var url = base.appendingPathComponent("Edge0Models", isDirectory: true)
-        if !FileManager.default.fileExists(atPath: url.path) {
-            try? FileManager.default.createDirectory(
-                at: url, withIntermediateDirectories: true)
+        let manager = FileManager.default
+        let base = manager.urls(for: .documentDirectory, in: .userDomainMask).first
+            ?? manager.temporaryDirectory
+        var url = base.appendingPathComponent("Models", isDirectory: true)
+
+        migrateFromApplicationSupport(into: url)
+
+        if !manager.fileExists(atPath: url.path) {
+            try? manager.createDirectory(at: url, withIntermediateDirectories: true)
         }
-        // Multi-GB checkpoints must never be uploaded to iCloud.
+        // Documents is backed up by default, and a 23 GB checkpoint that can be
+        // downloaded again has no business in an iCloud backup.
         var resourceValues = URLResourceValues()
         resourceValues.isExcludedFromBackup = true
         try? url.setResourceValues(resourceValues)
+
+        // Created eagerly so that someone opening the app's folder in Files
+        // sees where a checkpoint is meant to go instead of an empty directory.
+        for tier in Edge0Tier.allCases {
+            try? manager.createDirectory(
+                at: url.appendingPathComponent(tier.rawValue, isDirectory: true),
+                withIntermediateDirectories: true)
+        }
         return url
     }()
 
-    static var hubCache: HubCache { HubCache(cacheDirectory: modelsDirectory) }
+    /// Moves a store written by an earlier build, so an interrupted 23 GB
+    /// download is not silently orphaned by the change of location. Within one
+    /// volume this is a rename, so its cost does not depend on the size.
+    private static func migrateFromApplicationSupport(into destination: URL) {
+        let manager = FileManager.default
+        guard
+            let support = manager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+                .first
+        else { return }
+        let old = support.appendingPathComponent("Edge0Models", isDirectory: true)
+        guard manager.fileExists(atPath: old.path) else { return }
+
+        if !manager.fileExists(atPath: destination.path) {
+            try? manager.createDirectory(
+                at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if (try? manager.moveItem(at: old, to: destination)) != nil { return }
+        }
+
+        // Destination already there: take across whatever does not collide,
+        // then drop the old directory if it emptied out.
+        let names = (try? manager.contentsOfDirectory(atPath: old.path)) ?? []
+        for name in names {
+            let target = destination.appendingPathComponent(name)
+            guard !manager.fileExists(atPath: target.path) else { continue }
+            try? manager.moveItem(at: old.appendingPathComponent(name), to: target)
+        }
+        if (try? manager.contentsOfDirectory(atPath: old.path))?.isEmpty == true {
+            try? manager.removeItem(at: old)
+        }
+    }
+
+    /// Downloads go to their own subdirectory so the Hub's blob store does not
+    /// clutter the folders the user is meant to drop files into.
+    static var hubCacheDirectory: URL {
+        let url = modelsDirectory.appendingPathComponent("hub", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    static var hubCache: HubCache { HubCache(cacheDirectory: hubCacheDirectory) }
 
     static func repoID(for tier: Edge0Tier) -> Repo.ID? {
         Repo.ID(rawValue: tier.repoId)
@@ -57,13 +113,17 @@ enum Edge0Storage {
         }
     }
 
-    /// Where a checkpoint imported from Files lands. Kept apart from the Hub
-    /// cache so the two can never be confused for one another, and so deleting
-    /// one does not disturb the other.
+    /// Where a tier's own files live: imported through the picker, or dropped
+    /// straight in from Finder or the Files app. One folder per tier, named
+    /// after it, directly under the visible root — the shallower the path, the
+    /// likelier someone puts the files in the right place.
     static func importedDirectory(for tier: Edge0Tier) -> URL {
-        modelsDirectory
-            .appendingPathComponent("imported", isDirectory: true)
-            .appendingPathComponent(tier.rawValue, isDirectory: true)
+        modelsDirectory.appendingPathComponent(tier.rawValue, isDirectory: true)
+    }
+
+    /// The path to show the user, as it reads in the Files app.
+    static func displayPath(for tier: Edge0Tier) -> String {
+        "Edge0 Demo/Models/\(tier.rawValue)"
     }
 
     /// True when a directory holds something the loaders can actually use.
@@ -110,6 +170,10 @@ enum Edge0Storage {
         if FileManager.default.fileExists(atPath: imported.path) {
             try FileManager.default.removeItem(at: imported)
         }
+        // Put the empty folder back: it is the signpost for where to drop
+        // files, and it disappearing from Files after a delete is confusing.
+        try? FileManager.default.createDirectory(
+            at: imported, withIntermediateDirectories: true)
         guard let repo = repoID(for: tier) else { return }
         let directory = hubCache.repoDirectory(repo: repo, kind: .model)
         if FileManager.default.fileExists(atPath: directory.path) {

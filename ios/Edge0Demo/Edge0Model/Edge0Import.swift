@@ -32,8 +32,9 @@ enum Edge0ImportError: LocalizedError {
             "Okunamadı: \(name). Klasör yerine dosyaları seçmeyi deneyin."
         case .missingConfig:
             """
-            Seçimde config.json yok. Klasörün içine girip tüm dosyaları seçin \
-            (veya klasörün kendisini seçin).
+            Seçimde config.json yok. Klasörün içine girip tüm dosyaları seçin, \
+            ya da dosyaları Dosyalar uygulamasından doğrudan uygulamanın model \
+            klasörüne kopyalayın.
             """
         case .noWeights:
             "Seçimde model ağırlığı (model-*.safetensors) yok."

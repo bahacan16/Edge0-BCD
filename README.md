@@ -65,9 +65,13 @@ Bu, yerleşik yolun yaptığı matematiğin aynısıdır.
   isabeti ve bellek rakamlarını tek blok halinde panoya kopyalar. Model saçma
   çıktı verirse bildirilecek şey budur.
 
-Model dosyaları `Application Support` altında tutulur (iOS'un temizleyebildiği
-`Caches` değil) ve iCloud yedeğinden hariç tutulur. Sohbetler de aynı yerde,
-sohbet başına bir JSON dosyası olarak saklanır.
+Model dosyaları uygulamanın **Documents** klasöründe, `Models/<tier>` altında
+tutulur. Uygulama `UIFileSharingEnabled` bildirdiği için bu klasör hem Dosyalar
+uygulamasında (Bu iPhone'da → Edge0 Demo → Models) hem de iPhone'u Mac'e
+bağladığında Finder'da görünür — yani dosyaları oraya kendin koyabilir,
+inceleyebilir ve silebilirsin. Çok GB'lık kontrol noktaları iCloud yedeğinden
+hariç tutulur. Sohbetler kullanıcı tarafından yönetilecek şeyler olmadığı için
+Application Support altında kalır.
 
 ### Hazır indirilmiş modeli kullanmak
 
@@ -75,8 +79,12 @@ sohbet başına bir JSON dosyası olarak saklanır.
 duruyorsa telefondan tekrar indirmeye gerek yok. Modeller sekmesindeki
 **klasör** düğmesi seçtiğin dosyaları uygulamanın kendi deposuna kopyalar.
 
-Klasörün kendisini de seçebilirsin, ama **klasöre girip dosyaları seçmek daha
-güvenilir**: klasör seçimi, Files'ın uygulamaya dizin erişimi vermesine ve
+En sağlam yol picker'ı hiç kullanmamak: dosyaları **Finder'dan sürükleyip**
+`Edge0 Demo/Models/edge0-35b` klasörüne bırak (veya Dosyalar uygulamasında aynı
+yere kopyala). Uygulama bir sonraki açılışta orada bulur.
+
+Picker'ı kullanacaksan klasörün kendisini de seçebilirsin, ama **klasöre girip
+dosyaları seçmek daha güvenilir**: klasör seçimi, Files'ın uygulamaya dizin erişimi vermesine ve
 içindeki her dosyanın cihaza inmiş olmasına bağlı, ve olmadığında "Aç"
 düğmesi hiçbir şey yapmıyormuş gibi görünüyor. iCloud'da duran ama henüz
 inmemiş dosyalar için uygulama hangi dosyanın eksik olduğunu söyler.
