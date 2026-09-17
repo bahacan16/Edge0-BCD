@@ -95,7 +95,8 @@ enum Edge0Storage {
     static var hubCache: HubCache { HubCache(cacheDirectory: hubCacheDirectory) }
 
     static func repoID(for tier: Edge0Tier) -> Repo.ID? {
-        Repo.ID(rawValue: tier.repoId)
+        guard !tier.repoId.isEmpty else { return nil }
+        return Repo.ID(rawValue: tier.repoId)
     }
 
     /// The downloaded snapshot for a tier, if one is present on disk.
@@ -182,6 +183,12 @@ enum Edge0Storage {
     /// the near misses are searched too. Only the tier's own folder is trusted
     /// blindly; anywhere shared has to match `model_type`.
     private static func searchRoots(for tier: Edge0Tier) -> [(url: URL, match: Edge0Tier?)] {
+        // The custom slot cannot be matched by `model_type`: its type is
+        // whatever is registered, so matching against it would mean matching
+        // against itself. Its own folder is the only place it is looked for,
+        // which also keeps it from claiming an edge0 checkpoint dropped in the
+        // Documents root.
+        if tier.isCustom { return [(importedDirectory(for: tier), nil)] }
         let documents = modelsDirectory.deletingLastPathComponent()
         return [
             (importedDirectory(for: tier), nil),
@@ -322,11 +329,18 @@ enum Edge0LoadError: LocalizedError {
     case invalidRepositoryID(String)
     case missingWeights(String)
     case missingChatTemplate
+    case customSlotEmpty(String)
 
     var errorDescription: String? {
         switch self {
         case .invalidRepositoryID(let id): "Geçersiz Hugging Face deposu: \(id)"
         case .missingWeights(let path): "Model dosyaları bulunamadı: \(path)"
+        case .customSlotEmpty(let path):
+            """
+            Klasörde model yok. Modelin config.json ve .safetensors dosyalarını \
+            Dosyalar uygulamasından \(path) klasörüne kopyalayın. İndirilen \
+            klasörü olduğu gibi içine atmanız da yeterli.
+            """
         case .missingChatTemplate:
             """
             Sohbet şablonu yok. Depodaki chat_template.jinja dosyasını da model \
@@ -383,6 +397,10 @@ enum Edge0Loader {
         let directory: URL
         if let local = Edge0Storage.localDirectory(for: tier) {
             directory = local
+        } else if tier.isCustom {
+            // There is no repository to fall back to: whatever is in the slot
+            // got there because someone put it there.
+            throw Edge0LoadError.customSlotEmpty(Edge0Storage.displayPath(for: tier))
         } else {
             let configuration = ModelConfiguration(
                 id: tier.repoId, eosTokenIds: tier.eosTokenIds)
@@ -395,12 +413,24 @@ enum Edge0Loader {
         Edge0Log.write("model dizini: \(directory.path)")
         Edge0Log.memory("dizin çözümlendi")
 
-        let loraURL = directory.appendingPathComponent(tier.loraFileName)
+        // Empty for the custom slot, which has no adapter of its own — and an
+        // empty path component is not a URL anyone should be handed.
+        let loraURL: URL? =
+            tier.loraFileName.isEmpty
+            ? nil : directory.appendingPathComponent(tier.loraFileName)
         let prerouterURL = tier.prerouterFileName.map(directory.appendingPathComponent)
         let container: ModelContainer
         var report: Edge0LoRAReport?
 
-        if tier.supportsExpertStreaming, streamExperts || tier.requiresExpertStreaming {
+        if tier.isCustom {
+            // Someone else's checkpoint: no edge0 adapter, no trained
+            // prerouter, and no streaming. What the config.json says is all
+            // there is to go on.
+            Edge0CustomModelRegistry.rescan(directory: directory)
+            let context = try await Edge0GenericLoader.load(
+                tier: tier, directory: directory, tokenizerLoader: Edge0TokenizerLoader())
+            container = ModelContainer(context: context)
+        } else if tier.supportsExpertStreaming, streamExperts || tier.requiresExpertStreaming {
             // The 35B checkpoint is far larger than any phone's memory, so its
             // experts stay on disk and are read per step.
             let loaded = try await Edge0StreamingLoader.load(

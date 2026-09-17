@@ -121,6 +121,9 @@ final class ModelManager {
     // MARK: Storage
 
     func refreshStorage() {
+        // The custom slot describes itself from whatever is in its folder, so
+        // its description is only as current as the last look.
+        Edge0CustomModelRegistry.rescan(directory: Edge0Storage.localDirectory(for: .custom))
         var downloaded: Set<Edge0Tier> = []
         var usage: [Edge0Tier: Int64] = [:]
         for tier in Edge0Tier.allCases {

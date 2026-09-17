@@ -20,6 +20,9 @@ enum Theme {
         case .edge0_35b:
             LinearGradient(
                 colors: [violet, pink], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .custom:
+            LinearGradient(
+                colors: [mint, cyan], startPoint: .topLeading, endPoint: .bottomTrailing)
         }
     }
 

@@ -1,10 +1,23 @@
 import Foundation
 
-/// The two tiers edge0 publishes. Numbers come from the upstream repo's
-/// model adapters (`src/edge0/models/edge0_{8b,35b}/__init__.py`) and README.
+/// The two tiers edge0 publishes, plus one slot for a checkpoint the user
+/// brought themselves. Numbers for the edge0 tiers come from the upstream
+/// repo's model adapters (`src/edge0/models/edge0_{8b,35b}/__init__.py`) and
+/// README; every answer for `.custom` comes from the config.json of whatever
+/// is in its folder, through `Edge0CustomModelRegistry`.
 enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
     case edge0_8b = "edge0-8b"
     case edge0_35b = "edge0-35b"
+    case custom = "custom"
+
+    /// What the custom slot currently holds, or nil when it is empty.
+    var customInfo: Edge0CustomModelInfo? {
+        self == .custom ? Edge0CustomModelRegistry.current : nil
+    }
+
+    /// True for the slot whose shape is read at runtime rather than compiled
+    /// in. Used where the UI has to stop claiming things it cannot know.
+    var isCustom: Bool { self == .custom }
 
     var id: String { rawValue }
 
@@ -12,6 +25,7 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .edge0_8b: "Edge0 8B"
         case .edge0_35b: "Edge0 35B"
+        case .custom: customInfo?.name ?? "Kendi modelin"
         }
     }
 
@@ -21,6 +35,16 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .edge0_8b: "8B"
         case .edge0_35b: "35B"
+        case .custom: "Özel"
+        }
+    }
+
+    /// The glyph on the models card.
+    var headerSymbol: String {
+        switch self {
+        case .edge0_8b: "bolt.horizontal"
+        case .edge0_35b: "brain"
+        case .custom: "person.crop.square"
         }
     }
 
@@ -28,6 +52,7 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .edge0_8b: "8B toplam · 1B aktif · 128 expert"
         case .edge0_35b: "35B toplam · 3B aktif · 256 expert"
+        case .custom: customInfo?.tagline ?? "MLX 4-bit bir modeli kendin ekle"
         }
     }
 
@@ -35,6 +60,8 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .edge0_8b: "Edge0/Edge0-8B-A1B-preview"
         case .edge0_35b: "Edge0/Edge0-35B-A3B-preview"
+        // Nothing to fetch: a custom checkpoint arrives through Files.
+        case .custom: ""
         }
     }
 
@@ -45,6 +72,7 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .edge0_8b: "bailing_hybrid"
         case .edge0_35b: "qwen3_5_moe"
+        case .custom: customInfo?.modelType ?? ""
         }
     }
 
@@ -54,6 +82,7 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .edge0_8b: ["BailingMoeV3ForCausalLM", "BailingMoeForCausalLM"]
         case .edge0_35b: ["Qwen3MoeForCausalLM", "Qwen3NextForCausalLM"]
+        case .custom: customInfo?.architectures ?? []
         }
     }
 
@@ -61,6 +90,8 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .edge0_8b: "lora_edge0_8b.safetensors"
         case .edge0_35b: "lora_edge0_35b.safetensors"
+        // edge0's adapters belong to edge0's checkpoints.
+        case .custom: ""
         }
     }
 
@@ -75,6 +106,7 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .edge0_8b: nil
         case .edge0_35b: "prerouter_edge0_35b.safetensors"
+        case .custom: nil
         }
     }
 
@@ -90,6 +122,7 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .edge0_8b: 4.2
         case .edge0_35b: 23.0
+        case .custom: Double(customInfo?.byteCount ?? 0) / 1_073_741_824
         }
     }
 
@@ -98,6 +131,9 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .edge0_8b: 1.4
         case .edge0_35b: 3.4
+        // Weights plus room for the cache and the graph. A rule of thumb for
+        // a resident model, which is all the custom slot can hold.
+        case .custom: Double(customInfo?.byteCount ?? 0) / 1_073_741_824 * 1.3
         }
     }
 
@@ -108,6 +144,9 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .edge0_8b: false
         case .edge0_35b: true
+        // The streaming path is written against edge0's 35B checkpoint; a
+        // custom model has to fit in memory as it stands.
+        case .custom: false
         }
     }
 
@@ -120,6 +159,7 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .edge0_8b: 128
         case .edge0_35b: 256
+        case .custom: customInfo?.expertCount ?? 0
         }
     }
 
@@ -127,6 +167,7 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .edge0_8b: 8
         case .edge0_35b: 4
+        case .custom: customInfo?.expertsPerToken ?? 0
         }
     }
 
@@ -134,6 +175,7 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .edge0_8b: 24
         case .edge0_35b: 40
+        case .custom: customInfo?.layerCount ?? 0
         }
     }
 
@@ -143,6 +185,9 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .edge0_8b: 33
         case .edge0_35b: 13
+        // Unknown until it runs. Zero reads as "no claim" everywhere this is
+        // shown, which is the honest answer for someone else's checkpoint.
+        case .custom: 0
         }
     }
 
@@ -150,6 +195,7 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .edge0_8b: [156_895]
         case .edge0_35b: [248_046, 248_044]
+        case .custom: Set(customInfo?.eosTokenIds ?? [])
         }
     }
 
@@ -164,6 +210,10 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
             SamplingDefaults(
                 temperature: 0.7, topP: 0.95, topK: 64, repetitionPenalty: 1.0,
                 maxTokens: 2048)
+        case .custom:
+            SamplingDefaults(
+                temperature: 0.7, topP: 0.95, topK: 64, repetitionPenalty: 1.0,
+                maxTokens: 2048)
         }
     }
 
@@ -171,6 +221,7 @@ enum Edge0Tier: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .edge0_8b: ("accentCyan", "accentBlue")
         case .edge0_35b: ("accentViolet", "accentPink")
+        case .custom: ("accentMint", "accentCyan")
         }
     }
 }

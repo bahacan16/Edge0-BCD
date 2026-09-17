@@ -150,13 +150,27 @@ private struct TierCard: View {
             VStack(alignment: .leading, spacing: 14) {
                 header
 
+                // A custom checkpoint answers some of these and not others.
+                // A chip reading "0×0 expert" is not a fact about the model,
+                // it is a fact about the table it was looked up in.
                 HStack(spacing: 8) {
-                    SpecChip(icon: "square.stack.3d.up", text: "\(tier.layerCount) katman")
-                    SpecChip(
-                        icon: "circle.grid.3x3",
-                        text: "\(tier.expertCount)×\(tier.expertsPerToken) expert")
-                    SpecChip(
-                        icon: "bolt", text: "~\(Int(tier.referenceTokensPerSecond)) tok/s")
+                    if tier.layerCount > 0 {
+                        SpecChip(icon: "square.stack.3d.up", text: "\(tier.layerCount) katman")
+                    }
+                    if tier.expertCount > 0 {
+                        SpecChip(
+                            icon: "circle.grid.3x3",
+                            text: "\(tier.expertCount)×\(tier.expertsPerToken) expert")
+                    }
+                    if tier.referenceTokensPerSecond > 0 {
+                        SpecChip(
+                            icon: "bolt", text: "~\(Int(tier.referenceTokensPerSecond)) tok/s")
+                    }
+                    if let info = tier.customInfo, info.contextLength > 0 {
+                        SpecChip(
+                            icon: "text.alignleft",
+                            text: "\(info.contextLength / 1024)k bağlam")
+                    }
                 }
 
                 if isBusyWithThis {
@@ -189,7 +203,7 @@ private struct TierCard: View {
                 .fill(Theme.gradient(for: tier))
                 .frame(width: 44, height: 44)
                 .overlay(
-                    Image(systemName: tier == .edge0_35b ? "brain" : "bolt.horizontal")
+                    Image(systemName: tier.headerSymbol)
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(.white)
                 )
@@ -212,12 +226,16 @@ private struct TierCard: View {
 
     private var statsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            LabeledRow(
-                label: "İndirme boyutu",
-                value: String(format: "%.1f GB", tier.downloadSizeGB))
-            LabeledRow(
-                label: "Tepe aktif bellek",
-                value: String(format: "~%.1f GB", tier.peakActiveMemoryGB))
+            if !tier.isCustom {
+                LabeledRow(
+                    label: "İndirme boyutu",
+                    value: String(format: "%.1f GB", tier.downloadSizeGB))
+            }
+            if tier.peakActiveMemoryGB > 0 {
+                LabeledRow(
+                    label: "Tepe aktif bellek",
+                    value: String(format: "~%.1f GB", tier.peakActiveMemoryGB))
+            }
             if isDownloaded {
                 LabeledRow(
                     label: Edge0Storage.isImported(tier) ? "İçe aktarıldı" : "Diskte",
