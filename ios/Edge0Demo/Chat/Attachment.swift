@@ -80,19 +80,22 @@ enum Edge0AttachmentReader {
     /// prompt on the streaming tier.
     static let maximumBytes = 60 * 1024
 
-    /// What the picker will offer. `.item` is deliberately absent: everything
-    /// here is something whose bytes are text.
-    static let contentTypes: [UTType] = [
-        .plainText, .utf8PlainText, .text, .sourceCode, .pythonScript, .swiftSource,
-        .cSource, .cHeader, .json, .xml, .yaml, .commaSeparatedText, .tabSeparatedText,
-        .html, .log, .rtf, .delimitedText, .script, .shellScript, .propertyList,
-        .pdf,
-    ] + [
-        // Neither has a system type, so they are declared by extension. DWG is
-        // offered on purpose even though it cannot be read: a file greyed out
-        // in the picker with no explanation is worse than one that says why.
-        UTType(filenameExtension: "dxf"), UTType(filenameExtension: "dwg"),
-    ].compactMap { $0 }
+    /// What the picker will offer: every regular file, and no folders.
+    ///
+    /// This used to be a curated list of text UTIs plus
+    /// `UTType(filenameExtension: "dxf")` and the same for `dwg`. Neither
+    /// extension has a registered system type, so those two calls return
+    /// *dynamic* UTIs — `dyn.ah62d4rv4ge81k5pu` and the like — and a document
+    /// picker handed a dynamic type does not reliably return the file it was
+    /// given. DXF is the format this is most needed for, so the list was
+    /// disqualifying its most important case.
+    ///
+    /// `.data` is every file and no directory, which keeps a folder from being
+    /// picked as if it were a document. What the app can actually read is
+    /// decided by `read` a moment later, and it says why when the answer is
+    /// no — which was always the intent here: a file greyed out in the picker
+    /// with no explanation is worse than one that says why.
+    static let contentTypes: [UTType] = [.data]
 
     /// A drawing is summarised rather than quoted, so it may be far larger than
     /// a file whose text goes into the prompt as it stands.
@@ -104,9 +107,10 @@ enum Edge0AttachmentReader {
 
         let name = url.lastPathComponent
         let ext = url.pathExtension.lowercased()
+        Edge0Log.write("ek okunuyor: \(name) · kapsam \(scoped)")
         guard ext != "dwg" else { throw Edge0AttachmentError.dwgUnsupported(name) }
 
-        guard let data = try? Data(contentsOf: url) else {
+        guard let data = coordinatedRead(url) else {
             throw Edge0AttachmentError.unreadable(name)
         }
         guard !data.isEmpty else { throw Edge0AttachmentError.empty(name) }
@@ -171,6 +175,31 @@ enum Edge0AttachmentReader {
         return Edge0Attachment(
             name: name, text: extract.text, byteCount: data.count, truncated: extract.truncated,
             kind: .pdf, descriptor: "\(extract.pageCount) sayfa · \(extract.source)")
+    }
+
+    /// Reads through `NSFileCoordinator`.
+    ///
+    /// A file picked out of the Files app may live in iCloud Drive or in
+    /// another app's provider and not be on this device yet. A bare
+    /// `Data(contentsOf:)` on one of those fails, or blocks — coordinating the
+    /// read is what makes the provider materialise the file first.
+    private static func coordinatedRead(_ url: URL) -> Data? {
+        var data: Data?
+        var failure: Error?
+        var coordinationError: NSError?
+        NSFileCoordinator().coordinate(
+            readingItemAt: url, options: [.withoutChanges], error: &coordinationError
+        ) { actual in
+            do { data = try Data(contentsOf: actual) } catch { failure = error }
+        }
+        if let coordinationError {
+            Edge0Log.failure("ek eşgüdümlü okuma", coordinationError)
+            // The coordinator refusing is not the last word: a plain read still
+            // works for a file already on the device.
+            return try? Data(contentsOf: url)
+        }
+        if let failure { Edge0Log.failure("ek okuma", failure) }
+        return data
     }
 
     private static func decode(_ data: Data) -> String? {

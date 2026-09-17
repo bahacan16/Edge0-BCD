@@ -51,9 +51,28 @@ struct ChatView: View {
             allowsMultipleSelection: true
         ) { result in
             switch result {
-            case .success(let urls): viewModel?.attach(urls)
-            case .failure(let error): viewModel?.errorMessage = error.localizedDescription
+            case .success(let urls):
+                Edge0Log.write("dosya seçici: \(urls.count) dosya seçildi")
+                viewModel?.attach(urls)
+            case .failure(let error):
+                Edge0Log.failure("dosya seçici", error)
+                viewModel?.errorMessage = error.localizedDescription
             }
+        }
+        // `errorMessage` was written in seven places and read in none, so
+        // every failure below the send button — an unreadable attachment, a
+        // turn started with no model loaded — happened in total silence. From
+        // the outside that is indistinguishable from a button that does
+        // nothing, which is exactly how it was reported.
+        .alert(
+            "Olmadı",
+            isPresented: Binding(
+                get: { viewModel?.errorMessage != nil },
+                set: { if !$0 { viewModel?.errorMessage = nil } })
+        ) {
+            Button("Tamam", role: .cancel) { viewModel?.errorMessage = nil }
+        } message: {
+            Text(viewModel?.errorMessage ?? "")
         }
     }
 

@@ -88,7 +88,10 @@ final class ChatViewModel {
                         continue
                     }
                     attachments.append(attachment)
+                    Edge0Log.write(
+                        "ek eklendi: \(attachment.name) · \(attachment.summary)")
                 } catch {
+                    Edge0Log.failure("ek", error)
                     errorMessage = error.localizedDescription
                 }
             }
