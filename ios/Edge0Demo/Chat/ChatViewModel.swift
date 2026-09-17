@@ -76,6 +76,17 @@ final class ChatViewModel {
     var isReadingAttachment = false
 
     func attach(_ urls: [URL]) {
+        // The picker reporting success with nothing in it is a real outcome,
+        // not an impossible one, and it used to produce the same total silence
+        // as every other failure here.
+        guard !urls.isEmpty else {
+            Edge0Log.write("dosya seçici boş döndü")
+            errorMessage =
+                "Dosya seçici boş döndü. Dosyayı bir kez dokunup seçtikten sonra"
+                + " sağ üstten Aç deyin; dosya iCloud'daysa önce indirilmesi"
+                + " gerekebilir."
+            return
+        }
         Task {
             isReadingAttachment = true
             defer { isReadingAttachment = false }
