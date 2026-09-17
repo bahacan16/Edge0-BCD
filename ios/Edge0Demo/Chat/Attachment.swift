@@ -59,7 +59,9 @@ enum Edge0AttachmentError: LocalizedError {
         switch self {
         case .unreadable(let name): "Dosya okunamadı: \(name)"
         case .notText(let name):
-            "\(name) düz metin değil. Metin dosyaları (.txt, .md, .json, .csv), kaynak kodu, .pdf ve .dxf eklenebilir."
+            "\(name) ikili bir dosya, metin değil. Görseller, arşivler ve"
+                + " çalıştırılabilir dosyalar modele verilemez — metin dosyaları"
+                + " (.txt, .md, .json, .csv), kaynak kodu, .pdf ve .dxf eklenebilir."
         case .pdfUnreadable(let name):
             "\(name) açılamadı — bozuk ya da parola korumalı bir PDF."
         case .pdfWithoutText(let name):
@@ -202,9 +204,49 @@ enum Edge0AttachmentReader {
         return data
     }
 
+    /// Whether these bytes are a file of text at all.
+    ///
+    /// This has to be asked *before* decoding, because decoding cannot answer
+    /// it. ISO-Latin-1 maps every one of the 256 byte values to a character,
+    /// so `String(data:encoding:.isoLatin1)` succeeds on anything — and with
+    /// that in the fallback list, `decode` never returned nil and `notText`
+    /// could never be thrown. A PNG went into a prompt as sixty kilobytes of
+    /// mojibake, which is tens of thousands of tokens of noise, and the turn
+    /// that followed took the app out of memory.
+    ///
+    /// Two signals, both cheap: a NUL byte, which no text file has, and the
+    /// share of control characters, which in real text is approximately zero
+    /// and in compressed binary is about a sixth.
+    private static func looksBinary(_ data: Data) -> Bool {
+        // UTF-16 text is half NUL bytes by construction, so it has to be
+        // recognised before the NUL test rather than after it.
+        if hasUTF16BOM(data) { return false }
+        let sample = data.prefix(8 * 1024)
+        guard !sample.isEmpty else { return false }
+        var controls = 0
+        for byte in sample {
+            if byte == 0 { return true }
+            // Everything below space except tab, newline and carriage return,
+            // plus the delete character.
+            if (byte < 0x09) || (byte > 0x0D && byte < 0x20) || byte == 0x7F {
+                controls += 1
+            }
+        }
+        return controls * 100 > sample.count * 2
+    }
+
+    private static func hasUTF16BOM(_ data: Data) -> Bool {
+        let head = Array(data.prefix(2))
+        return head == [0xFF, 0xFE] || head == [0xFE, 0xFF]
+    }
+
     private static func decode(_ data: Data) -> String? {
+        guard !looksBinary(data) else { return nil }
+        if hasUTF16BOM(data), let utf16 = String(data: data, encoding: .utf16) { return utf16 }
         if let utf8 = String(data: data, encoding: .utf8) { return utf8 }
-        for encoding in [String.Encoding.utf16, .isoLatin1, .windowsCP1254] {
+        // Latin-1 is last and is a guess, not a test: it accepts anything that
+        // reaches it. What keeps that honest is the screening above.
+        for encoding in [String.Encoding.utf16, .windowsCP1254, .isoLatin1] {
             if let text = String(data: data, encoding: encoding) { return text }
         }
         return nil

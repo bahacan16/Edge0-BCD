@@ -129,6 +129,17 @@ final class ChatViewModel {
             return
         }
 
+        // Written before the turn starts, because the failure this guards
+        // against kills the process: an oversized prompt gives no chance to
+        // report itself afterwards, and the log is all that survives. Three
+        // characters to the token is rough but right within a factor that
+        // matters here.
+        Edge0Log.write(
+            "istem: \(prompt.count) karakter (~\(prompt.count / 3) token)"
+                + (files.isEmpty ? "" : " · \(files.count) ek")
+                + " · kalan bellek "
+                + ModelManager.formatBytes(ModelManager.availableProcessMemoryBytes))
+
         input = ""
         attachments = []
         errorMessage = nil

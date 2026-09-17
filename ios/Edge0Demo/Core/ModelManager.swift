@@ -90,6 +90,16 @@ final class ModelManager {
                 Edge0Log.write("bellek uyarısı — \(free) yer var, önbelleğe dokunulmadı")
                 return
             }
+            // A resident model has no expert cache to give back — the slot
+            // count is zero and always was. Claiming it "halved the cache" in
+            // that case describes an action that did not happen, and this log
+            // has already been wrong once in exactly that way.
+            guard Edge0ExpertCaches.slotsPerLayer > 0 else {
+                Edge0Log.write(
+                    "bellek uyarısı — \(free) kalmıştı, yerleşik model:"
+                        + " geri verilecek expert önbelleği yok")
+                return
+            }
             let slots = Edge0ExpertCaches.relieve()
             Edge0Meter.countRelief()
             // Remembered against the tier, and written through now rather than
