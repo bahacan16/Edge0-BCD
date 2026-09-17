@@ -44,6 +44,12 @@ enum Edge0Python {
         Bundle.main.bundleURL.appendingPathComponent("app_packages", isDirectory: true)
     }
 
+    /// Modules this project wrote, as opposed to ones it downloaded. Separate
+    /// from `app_packages` because the fetch script empties that directory.
+    private static var shims: URL {
+        Bundle.main.bundleURL.appendingPathComponent("py_shim", isDirectory: true)
+    }
+
     /// The `pythonX.Y` directory, discovered rather than hard-coded: the
     /// support package's version moves and a stale constant would fail as a
     /// mysterious empty `sys.path`.
@@ -84,6 +90,7 @@ enum Edge0Python {
             let searchPath = [
                 stdlib.path,
                 stdlib.appendingPathComponent("lib-dynload").path,
+                shims.path,
                 bundledPackages.path,
                 sitePackages.path,
             ].joined(separator: ":")
@@ -204,6 +211,19 @@ enum Edge0Python {
                     + " · 100x50 alan " + str(round(alan(kare[0])))
                     + " · +3 mm " + str(round(alan(disari[0])))
                     + " · -3 mm " + str(round(alan(iceri[0]))))
+                from shapely.geometry import Polygon
+                from shapely.affinity import rotate
+                # An L: its centroid lies on its own inner edge, which is the
+                # case representative_point exists for.
+                L = Polygon([(0, 0), (60, 0), (60, 20), (20, 20), (20, 80), (0, 80)])
+                nokta = L.representative_point()
+                donmus = rotate(L, 90, origin=(0, 0))
+                out.append(
+                    "shapely kabugu: alan " + str(round(L.area))
+                    + " · +3 mm " + str(round(L.buffer(3, join_style=1, resolution=32).area, 1))
+                    + " · nokta icinde " + str(L.contains(nokta))
+                    + " · merkez icinde " + str(L.contains(L.centroid))
+                    + " · 90 derece alan " + str(round(donmus.area)))
                 out.append("numpy yüklendi mi: " + str("numpy" in sys.modules))
                 _edge0_write("\\n".join(out))
                 """)

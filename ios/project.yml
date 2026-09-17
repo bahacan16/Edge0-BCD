@@ -59,6 +59,12 @@ targets:
       - path: Resources/app_packages
         type: folder
         buildPhase: resources
+      # The `shapely` shim: our own Python, versioned here rather than
+      # downloaded, and kept out of app_packages because the fetch script
+      # wipes that directory on every run.
+      - path: Resources/py_shim
+        type: folder
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.bahacan16.edge0demo
