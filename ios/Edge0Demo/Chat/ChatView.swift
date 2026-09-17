@@ -45,19 +45,18 @@ struct ChatView: View {
                 viewModel?.open(conversation)
             }
         }
-        .fileImporter(
-            isPresented: $showingAttachmentPicker,
-            allowedContentTypes: Edge0AttachmentReader.contentTypes,
-            allowsMultipleSelection: true
-        ) { result in
-            switch result {
-            case .success(let urls):
-                Edge0Log.write("dosya seçici: \(urls.count) dosya seçildi")
-                viewModel?.attach(urls)
-            case .failure(let error):
-                Edge0Log.failure("dosya seçici", error)
-                viewModel?.errorMessage = error.localizedDescription
-            }
+        // Not `.fileImporter`: it presented the browser and never called back.
+        // See Edge0DocumentPicker.
+        .sheet(isPresented: $showingAttachmentPicker) {
+            Edge0DocumentPicker(
+                contentTypes: Edge0AttachmentReader.contentTypes,
+                onPick: { urls in
+                    showingAttachmentPicker = false
+                    viewModel?.attach(urls)
+                },
+                onCancel: { showingAttachmentPicker = false }
+            )
+            .ignoresSafeArea()
         }
         // `errorMessage` was written in seven places and read in none, so
         // every failure below the send button — an unreadable attachment, a

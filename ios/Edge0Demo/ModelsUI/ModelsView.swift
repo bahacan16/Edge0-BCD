@@ -55,25 +55,33 @@ struct ModelsView: View {
                 )
             }
         }
-        .fileImporter(
-            isPresented: $showingImporter,
-            // Files as well as folders: picking the files inside the folder is
-            // the route that works when folder-scoped access does not, and it
-            // is the one the error messages point people to.
-            allowedContentTypes: [.folder, .item],
-            allowsMultipleSelection: true
-        ) { result in
-            // Falling back to the selected tier rather than returning: a lost
-            // `importingTier` used to make the picker look like it did nothing.
-            let tier = importingTier ?? settings.selectedTier
-            importingTier = nil
-            switch result {
-            case .success(let urls):
-                settings.selectedTier = tier
-                models.importModel(tier: tier, from: urls, settings: settings)
-            case .failure(let error):
-                importError = error.localizedDescription
-            }
+        // Not `.fileImporter`: it presents the browser and never calls back —
+        // the same defect that made the chat's attachment button look dead.
+        // See Edge0DocumentPicker.
+        .sheet(isPresented: $showingImporter) {
+            Edge0DocumentPicker(
+                // Files as well as folders: picking the files inside the folder
+                // is the route that works when folder-scoped access does not,
+                // and it is the one the error messages point people to.
+                contentTypes: [.folder, .item],
+                // A checkpoint is far too large to copy into tmp first.
+                asCopy: false,
+                onPick: { urls in
+                    showingImporter = false
+                    // Falling back to the selected tier rather than returning:
+                    // a lost `importingTier` used to make the picker look like
+                    // it did nothing.
+                    let tier = importingTier ?? settings.selectedTier
+                    importingTier = nil
+                    settings.selectedTier = tier
+                    models.importModel(tier: tier, from: urls, settings: settings)
+                },
+                onCancel: {
+                    showingImporter = false
+                    importingTier = nil
+                }
+            )
+            .ignoresSafeArea()
         }
         .alert(
             "İçe aktarılamadı",
