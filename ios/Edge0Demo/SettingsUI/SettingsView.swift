@@ -23,6 +23,7 @@ struct SettingsView: View {
                 samplingSection($settings)
                 conversationSection($settings)
                 runtimeSection($settings)
+                kvCacheSection($settings)
                 toolSection
                 pythonSection
                 interfaceSection($settings)
@@ -111,8 +112,16 @@ struct SettingsView: View {
                 title: "Tekrar cezası", value: settings.repetitionPenalty, range: 1.0...1.5,
                 step: 0.01, format: "%.2f", tint: Theme.violet,
                 caption: settings.wrappedValue.repetitionPenalty <= 1.0 ? "kapalı" : nil)
-            StepperRow(
-                title: "Maks. token", value: settings.maxTokens, range: 128...8192, step: 128)
+            // A stepper over this range would be a hundred taps. The ceiling
+            // is the model's business, not this slider's: Ornith declares a
+            // 262144-token context, so an 8192-token answer was a limit
+            // imposed here and nowhere else.
+            Picker("Maks. token", selection: settings.maxTokens) {
+                ForEach([512, 1024, 2048, 4096, 8192, 16384, 32768, 65536], id: \.self) {
+                    Text("\($0)").tag($0)
+                }
+            }
+            .font(.system(size: 14))
 
             Button("Tier varsayılanlarına dön") {
                 settings.wrappedValue.resetSamplingToTierDefaults()
@@ -312,6 +321,72 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    /// How the conversation's own memory is stored.
+    ///
+    /// The weights are fixed; the KV cache is the part that grows as you talk,
+    /// and on a resident model it is the only thing competing with them. This
+    /// is the lever that decides how long a conversation fits.
+    @ViewBuilder
+    private func kvCacheSection(_ settings: Bindable<AppSettings>) -> some View {
+        Section {
+            Picker("KV önbelleği", selection: settings.kvCacheBits) {
+                Text("16-bit").tag(0)
+                Text("8-bit").tag(8)
+                Text("4-bit").tag(4)
+            }
+            .pickerStyle(.segmented)
+
+            if settings.wrappedValue.kvCacheBits > 0 {
+                Picker("Şu token'dan sonra", selection: settings.kvCacheStart) {
+                    ForEach([0, 512, 1024, 2048, 4096], id: \.self) {
+                        Text($0 == 0 ? "baştan" : "\($0)").tag($0)
+                    }
+                }
+                .font(.system(size: 14))
+            }
+
+            LabeledContent("Token başına maliyet", value: kvCostDescription)
+                .font(.caption)
+        } header: {
+            Text("Bağlam belleği")
+        } footer: {
+            Text(kvFooter)
+        }
+    }
+
+    /// The saving, computed rather than claimed: 64 values per group, two
+    /// bytes each at 16-bit, plus one fp16 scale and one fp16 bias per group
+    /// whatever the bit width.
+    private var kvCostDescription: String {
+        switch settings.kvCacheBits {
+        case 8: "16-bit'in ~%53'ü"
+        case 4: "16-bit'in ~%28'i"
+        default: "tam (16-bit)"
+        }
+    }
+
+    private var kvFooter: String {
+        switch settings.kvCacheBits {
+        case 0:
+            return
+                "Sohbet uzadıkça büyüyen tek şey bu önbellek. 8-bit'e almak"
+                + " kabaca ikiye, 4-bit'e almak dörde böler — yani aynı"
+                + " bellekle iki ya da dört kat uzun bağlam demek. Yerleşik"
+                + " bir modelde ağırlıklarla yarışan tek şey bu."
+        case 8:
+            return
+                "8-bit pratikte kaliteyi gözle görülür biçimde düşürmez ve"
+                + " bağlamı kabaca iki katına çıkarır. Hibrit modellerde"
+                + " yalnızca tam dikkat katmanları etkilenir; linear attention"
+                + " katmanlarının durumu zaten sabit boyutlu."
+        default:
+            return
+                "4-bit en uzun bağlamı verir ama uzun sohbetlerde modelin"
+                + " geçmişi hatırlama keskinliği düşebilir. Önce 8-bit'i"
+                + " deneyin."
         }
     }
 

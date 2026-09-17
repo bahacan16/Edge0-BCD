@@ -138,7 +138,11 @@ final class ChatViewModel {
             "istem: \(prompt.count) karakter (~\(prompt.count / 3) token)"
                 + (files.isEmpty ? "" : " · \(files.count) ek")
                 + " · kalan bellek "
-                + ModelManager.formatBytes(ModelManager.availableProcessMemoryBytes))
+                + ModelManager.formatBytes(ModelManager.availableProcessMemoryBytes)
+                + " · KV "
+                + (settings.kvCacheBits > 0
+                    ? "\(settings.kvCacheBits)-bit (\(settings.kvCacheStart) sonrası)" : "16-bit")
+                + " · maks \(settings.maxTokens) token")
 
         input = ""
         attachments = []

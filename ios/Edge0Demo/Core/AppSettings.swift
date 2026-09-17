@@ -95,6 +95,23 @@ final class AppSettings {
         didSet { store(maxTokens, "maxTokens") }
     }
 
+    /// Bits per value in the KV cache, or 0 for none.
+    ///
+    /// The cache is what grows with the conversation, and on a resident model
+    /// it is the only thing competing with the weights for memory. Storing it
+    /// at 8 bits instead of 16 roughly halves that growth; 4 bits quarters it.
+    /// Only the full-attention layers are affected — a hybrid model's linear
+    /// layers keep a fixed-size state that is neither large nor quantizable.
+    var kvCacheBits: Int {
+        didSet { store(kvCacheBits, "kvCacheBits") }
+    }
+
+    /// How many tokens stay exact before quantization starts. A short
+    /// conversation never reaches it and pays nothing.
+    var kvCacheStart: Int {
+        didSet { store(kvCacheStart, "kvCacheStart") }
+    }
+
     // MARK: Conversation
 
     var systemPrompt: String {
@@ -146,6 +163,11 @@ final class AppSettings {
         repetitionPenalty = d.object(forKey: Self.key("repetitionPenalty")) as? Double
             ?? Double(defaults.repetitionPenalty)
         maxTokens = d.object(forKey: Self.key("maxTokens")) as? Int ?? defaults.maxTokens
+        // Off by default: quantizing the cache changes what the model
+        // attends to, and that is the user's call to make rather than one to
+        // inherit from an update.
+        kvCacheBits = d.object(forKey: Self.key("kvCacheBits")) as? Int ?? 0
+        kvCacheStart = d.object(forKey: Self.key("kvCacheStart")) as? Int ?? 1024
 
         systemPrompt = d.string(forKey: Self.key("systemPrompt")) ?? Self.defaultSystemPrompt
         thinkingMode = d.object(forKey: Self.key("thinkingMode")) as? Bool ?? false
@@ -187,6 +209,9 @@ final class AppSettings {
     var generateParameters: GenerateParameters {
         GenerateParameters(
             maxTokens: maxTokens,
+            kvBits: kvCacheBits > 0 ? kvCacheBits : nil,
+            kvGroupSize: 64,
+            quantizedKVStart: kvCacheStart,
             temperature: Float(temperature),
             topP: Float(topP),
             topK: topK,
