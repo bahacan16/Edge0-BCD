@@ -331,6 +331,12 @@ struct SettingsView: View {
                 Label("Python'u sına", systemImage: "terminal")
             }
 
+            NavigationLink {
+                PythonPackagesView()
+            } label: {
+                Label("Paketler", systemImage: "shippingbox")
+            }
+
             if let pythonReport {
                 Text(pythonReport)
                     .font(.system(size: 11, design: .monospaced))

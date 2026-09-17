@@ -116,7 +116,7 @@ enum Edge0Python {
             .appendingPathComponent("python-\(UUID().uuidString).txt")
         let preamble = """
             import sys, traceback
-            EDGE0_OUT = \(quoted(output.path))
+            EDGE0_OUT = \(literal(output.path))
             def _edge0_write(text):
                 with open(EDGE0_OUT, "w", encoding="utf-8") as handle:
                     handle.write(text)
@@ -138,7 +138,7 @@ enum Edge0Python {
     }
 
     /// Python string literal for a path, so a stray quote cannot end it early.
-    private static func quoted(_ text: String) -> String {
+    static func literal(_ text: String) -> String {
         "\"\(text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\""
     }
 
