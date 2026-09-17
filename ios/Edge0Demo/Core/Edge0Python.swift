@@ -88,6 +88,13 @@ enum Edge0Python {
                 sitePackages.path,
             ].joined(separator: ":")
 
+            // Before Py_Initialize, and only once: the inittab is read while
+            // the import machinery is being built, so a module added after
+            // that point is simply not there. `_edge0geom` is compiled into
+            // the app binary rather than shipped as a `.so`, which is why it
+            // can be registered this way at all.
+            edge0_register_geom_module()
+
             setenv("PYTHONHOME", home.path, 1)
             setenv("PYTHONPATH", searchPath, 1)
             // Nothing in the bundle is writable, and a failed .pyc write is a
@@ -157,7 +164,7 @@ enum Edge0Python {
                 out.append("path:")
                 for entry in sys.path:
                     out.append("  " + entry)
-                for name in ("zlib", "binascii", "_struct", "math", "pyparsing", "ezdxf", "pypdf"):
+                for name in ("zlib", "binascii", "_struct", "math", "pyparsing", "ezdxf", "pypdf", "_edge0geom"):
                     try:
                         module = __import__(name)
                         out.append("ok   " + name + " " + str(getattr(module, "__version__", "")))
@@ -181,6 +188,22 @@ enum Edge0Python {
                 with open(pdf, "wb") as handle:
                     writer.write(handle)
                 out.append("pdf yaz/oku: " + str(len(PdfReader(pdf).pages)) + " sayfa")
+                import _edge0geom
+                kare = [[(0.0, 0.0), (100.0, 0.0), (100.0, 50.0), (0.0, 50.0)]]
+                disari = _edge0geom.offset(kare, 3.0, join="round")
+                iceri = _edge0geom.offset(kare, -3.0, join="round")
+                def alan(halka):
+                    toplam = 0.0
+                    for i in range(len(halka)):
+                        x1, y1 = halka[i]
+                        x2, y2 = halka[(i + 1) % len(halka)]
+                        toplam += x1 * y2 - x2 * y1
+                    return abs(toplam) / 2.0
+                out.append(
+                    "clipper2 " + _edge0geom.version()
+                    + " · 100x50 alan " + str(round(alan(kare[0])))
+                    + " · +3 mm " + str(round(alan(disari[0])))
+                    + " · -3 mm " + str(round(alan(iceri[0]))))
                 out.append("numpy yüklendi mi: " + str("numpy" in sys.modules))
                 _edge0_write("\\n".join(out))
                 """)

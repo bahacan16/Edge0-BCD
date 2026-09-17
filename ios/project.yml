@@ -65,6 +65,15 @@ targets:
         # Where the extension modules end up once the build phase turns each
         # one into a framework.
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
+        # `_edge0geom` is a Python extension module compiled into the binary
+        # rather than shipped as a `.so`, so Swift has to reach its registration
+        # function to add it to the inittab before the interpreter starts.
+        SWIFT_OBJC_BRIDGING_HEADER: Edge0Demo/Edge0Demo-Bridging-Header.h
+        # Clipper2 includes itself as `clipper2/clipper.h`.
+        HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/Edge0Demo $(SRCROOT)/Edge0Demo/Vendor/Clipper2"
+        # Clipper2 2.0.1 is C++17.
+        CLANG_CXX_LANGUAGE_STANDARD: "c++17"
+        CLANG_CXX_LIBRARY: "libc++"
     postBuildScripts:
       - name: Install Python runtime
         basedOnDependencyAnalysis: false
