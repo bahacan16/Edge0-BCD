@@ -90,7 +90,7 @@ else
   rm -rf /tmp/wheels && mkdir -p /tmp/wheels
   python3 -m pip download --no-deps --only-binary=:all: \
     --python-version 3.14 --implementation py --abi none --platform any \
-    -d /tmp/wheels ezdxf==1.0.3 pyparsing typing_extensions
+    -d /tmp/wheels ezdxf==1.0.3 pyparsing typing_extensions pypdf
   for wheel in /tmp/wheels/*.whl; do
     echo "   unzip $(basename "$wheel")"
     unzip -q -o "$wheel" -d "$PKGS"
@@ -101,7 +101,7 @@ fi
 # Loudly, and here: an empty directory reaches XcodeGen as "missing source
 # directory", which is a true statement about a completely different problem —
 # and is exactly how a botched edit to this script presented last time.
-for required in ezdxf pyparsing typing_extensions.py; do
+for required in ezdxf pyparsing typing_extensions.py pypdf; do
   if [ ! -e "$PKGS/$required" ]; then
     echo "FATAL: $required missing from app_packages" >&2
     ls -1 "$PKGS" >&2

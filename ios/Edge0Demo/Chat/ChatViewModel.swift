@@ -70,14 +70,27 @@ final class ChatViewModel {
     /// make each one slower than the last for no reason anyone could see.
     var attachments: [Edge0Attachment] = []
 
+    /// True while a file is being turned into text. Reading is off the main
+    /// actor because it is not always cheap — a PDF may cost a pass over every
+    /// page, and a stubborn one costs an interpreter start on top of that.
+    var isReadingAttachment = false
+
     func attach(_ urls: [URL]) {
-        for url in urls {
-            do {
-                let attachment = try Edge0AttachmentReader.read(url)
-                guard !attachments.contains(where: { $0.name == attachment.name }) else { continue }
-                attachments.append(attachment)
-            } catch {
-                errorMessage = error.localizedDescription
+        Task {
+            isReadingAttachment = true
+            defer { isReadingAttachment = false }
+            for url in urls {
+                do {
+                    let attachment = try await Task.detached(priority: .userInitiated) {
+                        try Edge0AttachmentReader.read(url)
+                    }.value
+                    guard !attachments.contains(where: { $0.name == attachment.name }) else {
+                        continue
+                    }
+                    attachments.append(attachment)
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
             }
         }
     }

@@ -157,7 +157,7 @@ enum Edge0Python {
                 out.append("path:")
                 for entry in sys.path:
                     out.append("  " + entry)
-                for name in ("zlib", "binascii", "_struct", "math", "pyparsing", "ezdxf"):
+                for name in ("zlib", "binascii", "_struct", "math", "pyparsing", "ezdxf", "pypdf"):
                     try:
                         module = __import__(name)
                         out.append("ok   " + name + " " + str(getattr(module, "__version__", "")))
@@ -174,6 +174,13 @@ enum Edge0Python {
                 kinds = [e.dxftype() for e in back.modelspace()]
                 layers = sorted(l.dxf.name for l in back.layers)
                 out.append("dxf yaz/oku: " + str(kinds) + " katmanlar " + str(layers))
+                from pypdf import PdfReader, PdfWriter
+                pdf = os.path.join(os.path.dirname(EDGE0_OUT), "probe.pdf")
+                writer = PdfWriter()
+                writer.add_blank_page(width=200, height=200)
+                with open(pdf, "wb") as handle:
+                    writer.write(handle)
+                out.append("pdf yaz/oku: " + str(len(PdfReader(pdf).pages)) + " sayfa")
                 out.append("numpy yüklendi mi: " + str("numpy" in sys.modules))
                 _edge0_write("\\n".join(out))
                 """)

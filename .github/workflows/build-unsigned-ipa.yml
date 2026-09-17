@@ -24,7 +24,7 @@ jobs:
           sudo xcode-select -s "$LATEST_XCODE"
           xcodebuild -version
 
-      # 168 MB and three wheels; cached so only the first build after a
+      # 168 MB and four wheels; cached so only the first build after a
       # version bump pays for it.
       - name: Cache Python runtime
         id: python-cache
@@ -33,7 +33,7 @@ jobs:
           path: |
             ios/Python.xcframework
             ios/Resources/app_packages
-          key: edge0-python-3.14-ezdxf103-v3
+          key: edge0-python-3.14-ezdxf103-pypdf-v4
 
       - name: Fetch Python runtime and packages
         env:

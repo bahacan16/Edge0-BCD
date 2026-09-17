@@ -1,11 +1,10 @@
 // Text files attached to a turn.
 //
-// Deliberately text only. A phone-sized model reads what it is given as tokens,
-// so a file is useful here exactly to the extent that it is readable — a .py or
-// a .txt or a .json is a prompt with a name on it, while a PDF or a .docx is a
-// container that would need parsing this app does not do. Handing the model the
-// raw bytes of one of those produces confident nonsense, which is worse than
-// refusing it.
+// Everything that reaches the model reaches it as text, so every kind of file
+// here is turned into text first: a .py or a .txt goes in as it stands, a .dxf
+// goes in as a description of itself, a PDF goes in as the words extracted from
+// it. What is never done is handing over raw bytes of a container format and
+// hoping — that produces confident nonsense, which is worse than refusing.
 //
 // Size is capped because the cost is not storage, it is the prompt. On the
 // streaming tier every thousand tokens of context is another pass over forty
@@ -22,6 +21,8 @@ struct Edge0Attachment: Identifiable, Hashable, Sendable {
         /// A description of the file goes in, because the file itself is too
         /// large and in the wrong shape to be read directly.
         case drawing
+        /// Text pulled out of a container, which is not the file's own bytes.
+        case pdf
     }
 
     let id = UUID()
@@ -32,10 +33,16 @@ struct Edge0Attachment: Identifiable, Hashable, Sendable {
     let byteCount: Int
     let truncated: Bool
     var kind: Kind = .text
+    /// What was done to the file to make it readable, for the kinds where that
+    /// is not obvious: "12 sayfa · PDFKit".
+    var descriptor: String? = nil
 
     var summary: String {
         let size = ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file)
         if kind == .drawing { return "\(size) · çizim özeti" }
+        if kind == .pdf, let descriptor {
+            return truncated ? "\(size) · \(descriptor) · kırpıldı" : "\(size) · \(descriptor)"
+        }
         return truncated ? "\(size) · kırpıldı" : size
     }
 }
@@ -45,12 +52,20 @@ enum Edge0AttachmentError: LocalizedError {
     case notText(String)
     case empty(String)
     case dwgUnsupported(String)
+    case pdfUnreadable(String)
+    case pdfWithoutText(String)
 
     var errorDescription: String? {
         switch self {
         case .unreadable(let name): "Dosya okunamadı: \(name)"
         case .notText(let name):
-            "\(name) düz metin değil. Metin dosyaları (.txt, .md, .json, .csv), kaynak kodu ve .dxf eklenebilir."
+            "\(name) düz metin değil. Metin dosyaları (.txt, .md, .json, .csv), kaynak kodu, .pdf ve .dxf eklenebilir."
+        case .pdfUnreadable(let name):
+            "\(name) açılamadı — bozuk ya da parola korumalı bir PDF."
+        case .pdfWithoutText(let name):
+            "\(name) içinde metin yok; sayfaları görüntü olan taranmış bir PDF"
+                + " gibi duruyor. Uygulamada metin tanıma (OCR) yok, o yüzden"
+                + " okunacak bir şey çıkmıyor."
         case .empty(let name): "\(name) boş."
         case .dwgUnsupported(let name):
             """
@@ -71,6 +86,7 @@ enum Edge0AttachmentReader {
         .plainText, .utf8PlainText, .text, .sourceCode, .pythonScript, .swiftSource,
         .cSource, .cHeader, .json, .xml, .yaml, .commaSeparatedText, .tabSeparatedText,
         .html, .log, .rtf, .delimitedText, .script, .shellScript, .propertyList,
+        .pdf,
     ] + [
         // Neither has a system type, so they are declared by extension. DWG is
         // offered on purpose even though it cannot be read: a file greyed out
@@ -96,6 +112,9 @@ enum Edge0AttachmentReader {
         guard !data.isEmpty else { throw Edge0AttachmentError.empty(name) }
 
         if ext == "dxf" { return try readDrawing(data, name: name) }
+        if ext == "pdf" || data.starts(with: Array("%PDF".utf8)) {
+            return try readPDF(data, name: name)
+        }
 
         // Decoded rather than sniffed by extension: a .log written by a Windows
         // tool is as likely to be UTF-16 as UTF-8, and a file that decodes is
@@ -137,6 +156,23 @@ enum Edge0AttachmentReader {
             byteCount: data.count, truncated: false, kind: .drawing)
     }
 
+    /// A PDF goes in as its words, with page markers kept so the model can say
+    /// "on page 4" and mean it.
+    private static func readPDF(_ data: Data, name: String) throws -> Edge0Attachment {
+        guard data.count <= maximumDrawingBytes else {
+            throw Edge0AttachmentError.unreadable(name)
+        }
+        guard let extract = Edge0PDF.extract(data, name: name, limit: maximumBytes) else {
+            throw Edge0AttachmentError.pdfUnreadable(name)
+        }
+        guard !extract.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw Edge0AttachmentError.pdfWithoutText(name)
+        }
+        return Edge0Attachment(
+            name: name, text: extract.text, byteCount: data.count, truncated: extract.truncated,
+            kind: .pdf, descriptor: "\(extract.pageCount) sayfa · \(extract.source)")
+    }
+
     private static func decode(_ data: Data) -> String? {
         if let utf8 = String(data: data, encoding: .utf8) { return utf8 }
         for encoding in [String.Encoding.utf16, .isoLatin1, .windowsCP1254] {
@@ -162,7 +198,11 @@ extension Array where Element == Edge0Attachment {
                 return attachment.text
             }
             let fence = attachment.text.contains("```") ? "````" : "```"
-            var block = "Dosya: \(attachment.name)\n\(fence)\n\(attachment.text)\n\(fence)"
+            var title = "Dosya: \(attachment.name)"
+            if attachment.kind == .pdf, let descriptor = attachment.descriptor {
+                title += " (\(descriptor) ile çıkarılan metin)"
+            }
+            var block = "\(title)\n\(fence)\n\(attachment.text)\n\(fence)"
             if attachment.truncated {
                 block += "\n(Dosyanın ilk \(Edge0AttachmentReader.maximumBytes / 1024) KB'ı.)"
             }

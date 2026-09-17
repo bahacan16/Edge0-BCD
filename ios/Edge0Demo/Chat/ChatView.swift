@@ -117,6 +117,7 @@ struct ChatView: View {
                 isGenerating: viewModel.isGenerating,
                 canSend: viewModel.canSend,
                 attachments: viewModel.attachments,
+                isReading: viewModel.isReadingAttachment,
                 focused: $composerFocused,
                 onSend: viewModel.send,
                 onStop: viewModel.stop,
@@ -310,6 +311,7 @@ private struct Composer: View {
     let isGenerating: Bool
     let canSend: Bool
     let attachments: [Edge0Attachment]
+    let isReading: Bool
     @FocusState.Binding var focused: Bool
     let onSend: () -> Void
     let onStop: () -> Void
@@ -318,11 +320,21 @@ private struct Composer: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            if !attachments.isEmpty {
+            if !attachments.isEmpty || isReading {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(attachments) { attachment in
                             AttachmentChip(attachment: attachment) { onRemove(attachment) }
+                        }
+                        if isReading {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.mini)
+                                Text("okunuyor…")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
                         }
                     }
                     .padding(.horizontal, 14)
@@ -417,9 +429,17 @@ private struct AttachmentChip: View {
     let attachment: Edge0Attachment
     let onRemove: () -> Void
 
+    private var icon: String {
+        switch attachment.kind {
+        case .text: "doc.text"
+        case .drawing: "ruler"
+        case .pdf: "doc.richtext"
+        }
+    }
+
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "doc.text")
+            Image(systemName: icon)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(Theme.cyan)
             VStack(alignment: .leading, spacing: 1) {
