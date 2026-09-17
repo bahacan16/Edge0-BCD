@@ -13,6 +13,11 @@ jobs:
   build:
     runs-on: macos-15
     timeout-minutes: 60
+    # The run number is the build number, the version and the file name, so
+    # the three can never disagree about which build this is.
+    env:
+      APP_VERSION: 1.0.${{ github.run_number }}
+      IPA_NAME: Edge0Demo-1.0.${{ github.run_number }}.ipa
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -85,7 +90,7 @@ jobs:
             -destination "generic/platform=iOS" \
             -derivedDataPath build \
             -skipMacroValidation \
-            MARKETING_VERSION=1.0.${{ github.run_number }} \
+            MARKETING_VERSION=${{ env.APP_VERSION }} \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
@@ -115,6 +120,12 @@ jobs:
             || /usr/libexec/PlistBuddy -c "Set :Edge0Commit $SHA" "$PLIST"
           /usr/libexec/PlistBuddy -c "Print :Edge0Commit" "$PLIST"
 
+      # The file name carries the build number because that is the name the
+      # phone shows. Every build used to arrive as `Edge0Demo-unsigned.ipa`,
+      # so a folder of downloads gave no way to tell which one was which —
+      # and installing the wrong one is indistinguishable from a fix that did
+      # not work. The version here is the same number the app reports in
+      # Settings, so a log line and a file on disk name the same build.
       - name: Package unsigned IPA
         working-directory: ios
         run: |
@@ -127,13 +138,14 @@ jobs:
           fi
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
-          zip -r -y Edge0Demo-unsigned.ipa Payload
+          zip -r -y "$IPA_NAME" Payload
+          ls -lh "$IPA_NAME"
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Edge0Demo-unsigned-ipa
-          path: ios/Edge0Demo-unsigned.ipa
+          name: Edge0Demo-${{ env.APP_VERSION }}-ipa
+          path: ios/${{ env.IPA_NAME }}
           retention-days: 14
 
       # Runs even when the build fails: a Swift compile error aborts before
